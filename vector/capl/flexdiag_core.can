@@ -128,7 +128,7 @@ void DoSecurityRequestSeed(dword seq, byte level)
 /* Security step 2: send 27 <level> <key...>. `level` here is the even
  * (sendKey) level; built from the key bytes produced by
  * diagGenerateKeyFromSeed(). */
-void DoSendKey(dword seq, byte key[], dword len)
+void DoSendKey(dword seq, byte keyX[], dword len)
 {
   byte req[258];
   dword i;
@@ -137,7 +137,7 @@ void DoSendKey(dword seq, byte key[], dword len)
   gReqKind = 3;
   req[0] = 0x27;
   req[1] = gSecLevel + 1;              // sendKey = odd+1 (even)
-  for (i = 0; i < len; i++) req[i + 2] = key[i];
+  for (i = 0; i < len; i++) req[i + 2] = keyX[i];
   SendRaw(seq, req, len + 2);
 }
 
@@ -156,19 +156,19 @@ void DoTpStop()
  * On keygen failure: status=3 (ERR 500 keygen_fail), gSecActive cleared. */
 void SecuritySendKey(dword seq, byte seed[], dword seedLen)
 {
-  byte  key[256];
+  byte  keyX[256];
   dword keyLen;
   long  ret;
 
   ret = diagGenerateKeyFromSeed(seed, seedLen, gSecLevel, "", 0,
-                                 key, elcount(key), keyLen);
+                                 keyX, elcount(keyX), keyLen);
   if (ret != 0)
   {
     gSecActive = 0;
     PublishRsp(seq, 3, gRsp, 0, gReqKind);   // ERR 500 keygen_fail
     return;
   }
-  DoSendKey(seq, key, keyLen);
+  DoSendKey(seq, keyX, keyLen);
 }
 
 /* Single response handler for the ECU1 diagnostic object. Dispatches on
