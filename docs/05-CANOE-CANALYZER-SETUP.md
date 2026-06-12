@@ -28,8 +28,48 @@
 2. VN1610 connected; visible in **Vector Hardware Configuration**.
 3. Your **seed-key DLL** (`GenerateKeyEx` convention). **Bitness must match the tool process** (64-bit tool → 64-bit DLL).
 4. The FlexDiag CAPL files: `flexdiag_core.can`, `flexdiag_tcp.can`, `flexdiag_sysvar.can`.
-5. The sysvar definition file `flexdiag.vsysvar` (or create the namespace manually, §4).
+5. The sysvar definition file [`vector/capl/flexdiag.vsysvar`](../vector/capl/flexdiag.vsysvar) (or create the namespace manually, §4).
 6. For Option A only: confirm the **CAPL TCP/IP API** is available in your build (§7.1).
+
+---
+
+## 1.5 Pre-flight checklist (Windows, first run of §8)
+
+Work through this once, before starting the §8 bring-up checklist, on the
+machine that will run CANoe/CANalyzer. Each item references the open risk
+(`docs/STATUS.md` §5) it closes.
+
+- [ ] **Python environment ready:** from the repo root, `pip install -e .[dev]`
+      gets `websockets`, `pytest`, `ruff`, `black`, etc. for the terminal,
+      Mock ECU, and protocol/codec tests.
+- [ ] **Option B COM dependency:** for the real `VectorCom` backend (not
+      `--fake`), also `pip install -e .[vector]` (installs `pywin32` on
+      Windows). Not needed for Option A or for mock-first testing.
+- [ ] **Tool version confirmed:** CANoe/CANalyzer version installed is the
+      reference version at the top of this doc (`CANalyzer 16/17`) or newer.
+      If different, expect to re-verify CAPL syntax (R4) — see §10
+      troubleshooting.
+- [ ] **Seed-key DLL bitness matches the tool process** (R3): confirm your
+      attached seed-key DLL's bitness (32/64-bit) matches the CANoe/CANalyzer
+      process bitness (§5 step 3).
+- [ ] **Mock ECU key algorithm matches the test DLL** (R6): before step 6 of
+      §8, confirm `mock_ecu.uds.Ecu.test_key` (`key[i] = seed[i] ^ 0x5A`)
+      matches the algorithm implemented by the attached test seed-key DLL. If
+      they differ, `27 02` will fail with `7F 27 35` (invalidKey) against the
+      Mock ECU even though the DLL itself is fine.
+- [ ] **COM automation permitted** (Option B only): confirm
+      `Dispatch("CANoe.Application")` / `Dispatch("CANalyzer.Application")` is
+      not blocked by Windows/group policy on this machine — required for
+      `bridge/` (R2). Quick check: with the tool running and a config loaded,
+      `python -m bridge --prefer auto --port 8770` should report the detected
+      tool, not a COM error.
+- [ ] **VN1610 channel assignment confirmed** (R5): open **Vector Hardware
+      Configuration** and confirm the VN1610's CAN channels are visible and
+      assigned as expected, before proceeding to §2.
+- [ ] **`flexdiag.vsysvar` ready** (Option B only): have
+      [`vector/capl/flexdiag.vsysvar`](../vector/capl/flexdiag.vsysvar) on
+      hand to import per §4.1 (fallback: create the `Diag` namespace manually
+      per §4.2).
 
 ---
 
@@ -71,7 +111,9 @@ Skip this section if you are only using Option A.
 ### 4.1 Import (preferred)
 
 1. Open **System Variables Configuration** (*Environment / System Variables — verify in Help*).
-2. **Import** `flexdiag.vsysvar`. Confirm the `Diag` namespace contains the variables below.
+2. **Import** [`vector/capl/flexdiag.vsysvar`](../vector/capl/flexdiag.vsysvar). Confirm the `Diag` namespace contains the variables below.
+
+   > This file is a best-effort `.vsysvar` XML reconstruction (see header comment in the file). If **File > Import** rejects it on your installed version, fall back to §4.2 and create the namespace manually — the table there is the normative definition and matches `docs/03-TECHNICAL-DETAIL.md` §2 exactly.
 
 ### 4.2 Or create manually
 
@@ -86,7 +128,8 @@ Create namespace **`Diag`** with:
 | `ReqTrigger` | Integer | bumped to fire |
 | `RspData` | Data / byte array | size ≥ 4095 |
 | `RspSeq` | Integer | |
-| `RspStatus` | Integer | 0=pos,1=NRC,2=ok,3=err |
+| `RspStatus` | Integer | 0=positive,1=negative(NRC),2=ok(non-UDS),3=ERR keygen_fail,4=ERR ecu_timeout |
+| `RspKind` | Integer | echoes `ReqKind` |
 | `RspTrigger` | Integer | bumped when response ready |
 
 > Match the variable **types** to what the CAPL accessors expect in your version (scalar `@Diag::X` for ints; `sysGetVariableData`/`sysSetVariableData` for the Data arrays). Verify in Help.
@@ -123,7 +166,7 @@ Create namespace **`Diag`** with:
 1. **Verify the TCP/IP API is available:** create a throwaway CAPL node containing a single `TcpOpen(...)`/`TcpListen(...)` and compile. If it compiles, you're good. If the functions are unknown, your build lacks the API — use **Option B** instead.
 2. In `flexdiag_tcp.can`, confirm the **port** (default `9000`) and that it binds to `127.0.0.1` (or `INADDR_ANY` only if you intend remote access — see security note).
 3. Start the measurement; the Write window should show `FlexDiag TCP listening on 9000`.
-4. Test from a shell: `python terminal/repl.py --transport A --host 127.0.0.1 --port 9000`.
+4. Test from a shell: `python -m terminal --transport A --host 127.0.0.1 --port 9000`.
 
 ### 7.2 Option B — COM + sysvar bridge
 
@@ -131,11 +174,13 @@ Create namespace **`Diag`** with:
 2. Start the measurement in the tool (the bridge attaches to a *running* tool).
 3. Start the bridge:
    ```
-   python bridge/flexdiag_bridge.py --tool auto --ws 127.0.0.1:8770
+   python -m bridge --prefer auto --host 127.0.0.1 --port 8770
    ```
-   `--tool auto` tries CANoe then CANalyzer; use `--tool CANoe` or `--tool CANalyzer` to force.
+   `--prefer auto` tries CANoe then CANalyzer; use `--prefer CANoe` or `--prefer CANalyzer` to force.
+
+   To test the bridge/terminal/Mock-ECU loop without a real CANoe/CANalyzer (mock-first, CLAUDE.md rule 1), use `--fake` instead: `python -m bridge --fake --port 8770`.
 4. The bridge log should show the detected tool and `WebSocket listening on 8770`.
-5. Test: `python terminal/repl.py --transport B --url ws://127.0.0.1:8770`.
+5. Test: `python -m terminal --transport B --url ws://127.0.0.1:8770`.
 
 > **COM gotcha:** the bridge must be allowed to automate the tool. If `Dispatch("CANoe.Application")` fails, confirm the tool is running, a config is loaded, and (on locked-down machines) that COM automation isn't blocked by policy.
 
