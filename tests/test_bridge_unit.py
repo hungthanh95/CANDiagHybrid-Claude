@@ -1,7 +1,6 @@
 """Unit tests for :mod:`bridge.flexdiag_bridge` (Option B bridge core).
 
-Covers (FR-11 "Option B transport" / FR-12 "identical protocol both
-transports", docs/03 §2/§4.2):
+Covers (FR-11 "Option B transport", docs/03 §2/§4.2):
 
 - :class:`FakeVectorCom` dispatch for all 7 ``ReqKind`` values (RAW,
   READDTC, CLEARDTC, SECURITY full seed/key unlock, SESSION, TP START/STOP),
@@ -11,8 +10,7 @@ transports", docs/03 §2/§4.2):
   ``OK SEC <level>`` derivation (``level = data[1] - 1``) and the
   ``ERR 500 keygen_fail`` / ``ERR 504 ecu_timeout`` synthetic statuses.
 - The WS-facing ``_dispatch_line``/``handle`` ERR-400-vs-422 behavior
-  (unknown verb, bad hex, bad arg range), mirroring
-  ``mock_ecu/server.py``'s dispatch tests in ``tests/test_server_negatives.py``.
+  (unknown verb, bad hex, bad arg range).
 """
 
 from __future__ import annotations

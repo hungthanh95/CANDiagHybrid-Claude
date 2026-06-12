@@ -7,9 +7,17 @@ This document specifies the wire protocol, the System Variable layout, the CAPL 
 
 ---
 
-## 1. Wire protocol (shared by Option A and Option B)
+## 1. Wire protocol (Option B)
 
 **Frozen at `proto=1`** as of M0 — see `docs/STATUS.md` §1.
+
+> **Note (2026-06-12):** Option A (CAPL TCP transport) was removed; Option B
+> (COM + System Variables / WebSocket bridge) is the sole transport. The wire
+> protocol itself is unchanged (`proto=1`); the `READY` handshake's
+> `transport=<A|B>` field is retained for backwards compatibility (removing it
+> would require a `proto=2` bump per `docs/04` §1 rule 2) but is now always
+> populated as `transport=B`. See §3.1 (removed) and §3.2 for the historical
+> Option A transport node.
 
 ### 1.1 Design
 
@@ -41,7 +49,7 @@ A **line-based, ASCII** protocol. One message per line, terminated by `\n`. Fiel
 
 | Verb | Args | Meaning |
 |------|------|---------|
-| `READY` | `proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` | Handshake ack. Sent unsolicited as `0 READY proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` immediately on connect (both transports); also sent as `<seq> READY ...` if the client sends `HELLO`. |
+| `READY` | `proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` | Handshake ack. Sent unsolicited as `0 READY proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` immediately on connect; also sent as `<seq> READY ...` if the client sends `HELLO`. As of 2026-06-12, Option B is the sole transport so `transport` is always `B`; the field is retained (not removed) for protocol stability — see §1's removal note. |
 | `RSP` | `<byte> <byte> ...` | Positive UDS response (full bytes incl. SID+0x40). |
 | `NRC` | `<sid_hex> <nrc_hex>` | Negative response `7F <sid> <nrc>`. |
 | `OK` | `<what>` | Non-UDS success. The only two v1 forms are `OK TP` (terminal response to both `TP START` and `TP STOP`; seq correlation tells the client which) and `OK SEC <level_hex>` (terminal response to a successful `SECURITY <level_hex>` unlock, where `<level_hex>` is the odd level that was requested, 2 uppercase hex digits, e.g. `OK SEC 01`). |
@@ -114,7 +122,7 @@ Namespace `Diag`. The bridge writes the request and bumps a trigger; CAPL reacts
 
 > Why both `ReqData` and `ReqKind/ReqArg`? `RAW` uses `ReqData` directly. Higher-level verbs (`READDTC`, `SECURITY`, …) use `ReqKind`+`ReqArg` so CAPL runs the multi-step logic (e.g. security seed/key) rather than the bridge pre-building frames. This keeps the seed/key dance and tester-present timing inside the tool.
 
-> `PING`, `BYE`, and `HELLO` are handled entirely by the transport layer (TCP node / Python bridge) and never reach `flexdiag_core.can` or `Diag::Req*`. The `ReqKind` enum (0–6) covers only operations forwarded to the diagnostic core.
+> `PING`, `BYE`, and `HELLO` are handled entirely by the transport layer (Python bridge) and never reach `flexdiag_core.can` or `Diag::Req*`. The `ReqKind` enum (0–6) covers only operations forwarded to the diagnostic core.
 
 > `Diag::ReqData`/`Diag::RspData` are CANoe/CANalyzer System Variables of type **Data** (variable-length byte array, max `kMaxLen`=4095 bytes per §3.1). Via COM, `.Value` reads as a tuple of ints 0–255 (bridge: `bytes(sv('RspData').Value)`); writes accept a sequence of ints 0–255 (bridge: `sv('ReqData').Value = tuple(data)`).
 
@@ -260,92 +268,101 @@ void DoTesterPresent(int enable)
 
 > **Security flow nuance.** Because security is two round-trips, the transport node tracks "this seq is a SECURITY op at level L". When `on diagResponse` fires and the data starts `67 L` (seed), the node calls `SecuritySendKey()`. When the data starts `67 (L+1)`, it reports `OK SEC L`. A small state variable (current security seq + level) in the core or transport node carries this. Negative responses at either step are reported as `NRC`.
 
-### 3.2 `flexdiag_tcp.can` — Option A transport
+### 3.2 `flexdiag_tcp.can` — Option A transport (Removed 2026-06-12)
 
-```c
-/* flexdiag_tcp.can — TCP server transport (Option A).
- * Requires CAPL TCP/IP API (verify availability on CANalyzer build).
- */
-includes { /* may include a small TCP/IP header per Vector docs */ }
-
-variables
-{
-  dword gSocket;
-  dword gClient;
-  char  gRxLine[512];
-  const int kPort = 9000;
-  // security state
-  dword gSecSeq; byte gSecLevel; int gSecActive;
-}
-
-on start
-{
-  // Open + listen (exact calls per Vector TCP/IP API in the installed version)
-  TcpOpen(gSocket, ...);
-  TcpBind(gSocket, INADDR_ANY, kPort);
-  TcpListen(gSocket);
-  write("FlexDiag TCP listening on %d", kPort);
-}
-
-// On accepted connection, send the unsolicited banner immediately:
-//   TcpSendLine(0, "READY proto=1 tool=... transport=A")   // "0 READY ..."
-
-// On received data → parse one line → dispatch
-on TcpReceive
-{
-  // read into gRxLine, split on space, switch on VERB:
-  //   HELLO    -> reply "<seq> READY proto=1 tool=... transport=A" (echoes seq;
-  //               the unsolicited "0 READY ..." banner was already sent on accept)
-  //   SESSION  -> DoSession(seq, arg)
-  //   READDTC  -> DoReadDtc(seq, mask)
-  //   CLEARDTC -> DoClearDtc(seq, 0xFF,0xFF,0xFF)   // v1: group fixed to FF FF FF (full clear)
-  //   SECURITY -> gSecActive=1; gSecSeq=seq; gSecLevel=arg; DoSecuritySeed(seq, arg)
-  //   TP START -> DoTesterPresent(1); PublishRsp(seq,2,buf,0,5)   // -> "OK TP"
-  //   TP STOP  -> DoTesterPresent(0); PublishRsp(seq,2,buf,0,6)   // -> "OK TP"
-  //   RAW      -> gReqKind = 0; SendRaw(seq, bytes, len)   // set kind at dispatch, not inside SendRaw
-  //   PING     -> reply "<seq> PONG"
-}
-
-/* Implements the core's transport hook. */
-void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
-{
-  char line[2048];
-  // Security continuation: a positive 67 seed -> generate+send key, do not emit yet
-  if (gSecActive && status == 0 && len >= 2 && data[0] == 0x67)
-  {
-    if (data[1] == gSecLevel) {                 // seed arrived
-      SecuritySendKey(seq, gSecLevel, /*seed*/ &data[2], len - 2);
-      return;                                   // wait for key response
-    }
-    if (data[1] == gSecLevel + 1) {             // unlocked
-      gSecActive = 0;
-      TcpSendLine(seq, "OK SEC %02X", gSecLevel);  // gSecLevel = odd level requested
-      return;
-    }
-  }
-  // Normal mapping
-  switch (status) {
-    case 0: TcpSendBytesLine(seq, "RSP", data, len); break;
-    case 1: TcpSendNrc(seq, data, len); break;      // 7F sid nrc
-    case 2:
-      if (kind == 5 || kind == 6) TcpSendLine(seq, "OK TP");
-      break;
-    case 3: TcpSendLine(seq, "ERR 500 keygen_fail"); gSecActive=0; break;
-  }
-}
-```
-
-> **Note on the sketch above vs. the implementation.** This sketch shows
-> `PublishRsp` deriving `OK SEC <level>` from a `gSecLevel` global tracked by
-> the TCP node itself. The actual `flexdiag_tcp.can` does not track security
-> state locally: `flexdiag_core.can` owns `gSecActive`/`gSecSeq`/`gSecLevel`
-> and, on the final `67 <evenLevel>` response (kind==3, status==2), passes
-> those response bytes to `PublishRsp`. The TCP node derives the odd level
-> directly from the data it receives -- `oddLevel = data[1] - 1` (evenLevel -
-> 1) -- and emits `OK SEC <oddLevel>`. Cross-`.can`-file globals are
-> version-sensitive (docs/04 §2.2), which is why all security state lives in
-> `flexdiag_core.can` rather than being duplicated in each transport node.
-> The wire output `OK SEC <level>` is unchanged.
+> **Removed.** Option A (the CAPL TCP server transport) was removed on
+> 2026-06-12 — see `docs/STATUS.md` §5 (R1) and `CLAUDE.md` §1a. Option B
+> (`flexdiag_sysvar.can`, §3.3) is the sole transport. The sketch and notes
+> below are retained for historical reference only (e.g. they document the
+> `OK SEC <level>` derivation that §3.3 also relies on); `flexdiag_tcp.can`
+> no longer exists in the repo and MUST NOT be reintroduced without a
+> reviewer-approved change per `docs/04` §1.
+>
+> ```c
+> /* flexdiag_tcp.can — TCP server transport (Option A, historical).
+>  * Required the CAPL TCP/IP API.
+>  */
+> includes { /* may include a small TCP/IP header per Vector docs */ }
+>
+> variables
+> {
+>   dword gSocket;
+>   dword gClient;
+>   char  gRxLine[512];
+>   const int kPort = 9000;
+>   // security state
+>   dword gSecSeq; byte gSecLevel; int gSecActive;
+> }
+>
+> on start
+> {
+>   // Open + listen (exact calls per Vector TCP/IP API in the installed version)
+>   TcpOpen(gSocket, ...);
+>   TcpBind(gSocket, INADDR_ANY, kPort);
+>   TcpListen(gSocket);
+>   write("FlexDiag TCP listening on %d", kPort);
+> }
+>
+> // On accepted connection, send the unsolicited banner immediately:
+> //   TcpSendLine(0, "READY proto=1 tool=... transport=A")   // "0 READY ..."
+>
+> // On received data -> parse one line -> dispatch
+> on TcpReceive
+> {
+>   // read into gRxLine, split on space, switch on VERB:
+>   //   HELLO    -> reply "<seq> READY proto=1 tool=... transport=A" (echoes seq;
+>   //               the unsolicited "0 READY ..." banner was already sent on accept)
+>   //   SESSION  -> DoSession(seq, arg)
+>   //   READDTC  -> DoReadDtc(seq, mask)
+>   //   CLEARDTC -> DoClearDtc(seq, 0xFF,0xFF,0xFF)   // v1: group fixed to FF FF FF (full clear)
+>   //   SECURITY -> gSecActive=1; gSecSeq=seq; gSecLevel=arg; DoSecuritySeed(seq, arg)
+>   //   TP START -> DoTesterPresent(1); PublishRsp(seq,2,buf,0,5)   // -> "OK TP"
+>   //   TP STOP  -> DoTesterPresent(0); PublishRsp(seq,2,buf,0,6)   // -> "OK TP"
+>   //   RAW      -> gReqKind = 0; SendRaw(seq, bytes, len)   // set kind at dispatch, not inside SendRaw
+>   //   PING     -> reply "<seq> PONG"
+> }
+>
+> /* Implements the core's transport hook. */
+> void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
+> {
+>   char line[2048];
+>   // Security continuation: a positive 67 seed -> generate+send key, do not emit yet
+>   if (gSecActive && status == 0 && len >= 2 && data[0] == 0x67)
+>   {
+>     if (data[1] == gSecLevel) {                 // seed arrived
+>       SecuritySendKey(seq, gSecLevel, /*seed*/ &data[2], len - 2);
+>       return;                                   // wait for key response
+>     }
+>     if (data[1] == gSecLevel + 1) {             // unlocked
+>       gSecActive = 0;
+>       TcpSendLine(seq, "OK SEC %02X", gSecLevel);  // gSecLevel = odd level requested
+>       return;
+>     }
+>   }
+>   // Normal mapping
+>   switch (status) {
+>     case 0: TcpSendBytesLine(seq, "RSP", data, len); break;
+>     case 1: TcpSendNrc(seq, data, len); break;      // 7F sid nrc
+>     case 2:
+>       if (kind == 5 || kind == 6) TcpSendLine(seq, "OK TP");
+>       break;
+>     case 3: TcpSendLine(seq, "ERR 500 keygen_fail"); gSecActive=0; break;
+>   }
+> }
+> ```
+>
+> **Note on the sketch above vs. the (former) implementation.** This sketch
+> shows `PublishRsp` deriving `OK SEC <level>` from a `gSecLevel` global
+> tracked by the TCP node itself. The actual `flexdiag_tcp.can` did not track
+> security state locally: `flexdiag_core.can` owns `gSecActive`/`gSecSeq`/
+> `gSecLevel` and, on the final `67 <evenLevel>` response (kind==3,
+> status==2), passes those response bytes to `PublishRsp`. The TCP node
+> derived the odd level directly from the data it received --
+> `oddLevel = data[1] - 1` (evenLevel - 1) -- and emitted `OK SEC <oddLevel>`.
+> Cross-`.can`-file globals are version-sensitive (docs/04 §2.2), which is why
+> all security state lives in `flexdiag_core.can` rather than being
+> duplicated in each transport node. §3.3 (Option B, current) uses the same
+> `OK SEC <level>` derivation.
 
 ### 3.3 `flexdiag_sysvar.can` — Option B transport
 
@@ -389,16 +406,16 @@ void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 }
 ```
 
-> **Note on the sketch above vs. the implementation.** Like `flexdiag_tcp.can`
-> (§3.2's note), this transport node does **not** track security state
-> locally: `flexdiag_core.can` owns `gSecActive`/`gSecSeq`/`gSecLevel`
-> entirely. For `kind==3` the node calls `DoSecurityRequestSeed(seq, arg)`
-> and nothing else -- that single call sets `gSecActive=1; gSecSeq=seq;
-> gSecLevel=arg` inside `flexdiag_core.can`. On the final `67 <evenLevel>`
-> response (`status==2`, `kind==3`), `PublishRsp` is a pure passthrough: the
-> bridge derives `oddLevel = RspData[1] - 1` itself (same derivation as the
-> TCP node's `OK SEC` line, see §3.2's note), so no `_req_arg`/seq-keyed
-> side-channel is needed on either the CAPL or the bridge side.
+> **Note on the sketch above vs. the implementation.** Like the former
+> `flexdiag_tcp.can` (§3.2, removed), this transport node does **not** track
+> security state locally: `flexdiag_core.can` owns
+> `gSecActive`/`gSecSeq`/`gSecLevel` entirely. For `kind==3` the node calls
+> `DoSecurityRequestSeed(seq, arg)` and nothing else -- that single call sets
+> `gSecActive=1; gSecSeq=seq; gSecLevel=arg` inside `flexdiag_core.can`. On the
+> final `67 <evenLevel>` response (`status==2`, `kind==3`), `PublishRsp` is a
+> pure passthrough: the bridge derives `oddLevel = RspData[1] - 1` itself
+> (same derivation as §3.2's `OK SEC` line), so no `_req_arg`/seq-keyed
+> side-channel is needed.
 >
 > Exact sysvar data get/set CAPL calls (`sysGetVariableData` /
 > `sysSetVariableData` / the `@`/`sysvar()` accessor syntax for scalars and
@@ -493,15 +510,15 @@ async def handle(ws, vec):
 - COM events (`OnVariableChanged`) can replace polling `RspTrigger`; polling with `PumpWaitingMessages` is simpler and robust for v1. Keep the poll interval small (a few ms) for responsiveness.
 - Never call `Dispatch`/sysvar from the asyncio thread — only via `cmd_q`. This satisfies NFR-10.
 - `prefer` lets the operator force `CANoe` or `CANalyzer`; `auto` tries CANoe first.
-- The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for both transports; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
+- The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for Option B; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
 - Formatting `OK SEC <level>` and `OK TP` is response *formatting*, not diagnostic logic: the bridge reads `(RspStatus, RspKind, RspData)` from the `evt_q` tuple and renders the literal text. This does not violate "diagnostics live in CAPL, never in COM" (CLAUDE.md §3 rule 4) because no UDS request/response bytes are interpreted — only the non-UDS `OK` line is composed.
-- `encode_response` derives the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`) directly from `data`: `RspData = 67 <evenLevel>`, so `level = data[1] - 1` (the odd level originally requested via `SECURITY <level>`). This is the same derivation `flexdiag_tcp.can` uses for Option A (§3.2's note) -- no per-seq `_req_arg` side-channel is needed on either transport.
+- `encode_response` derives the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`) directly from `data`: `RspData = 67 <evenLevel>`, so `level = data[1] - 1` (the odd level originally requested via `SECURITY <level>`). This is the same derivation the former `flexdiag_tcp.can` used for Option A (§3.2, removed) -- no per-seq `_req_arg` side-channel is needed.
 
 ---
 
 ## 5. Mock ECU
 
-A Python UDS responder. Two modes: **CAN mode** (virtual or VN1610 via `python-can` + `can-isotp`) and **TCP-loopback mode** (speaks the *bus side* over a simple socket for the all-software topology).
+A Python UDS responder. `mock_ecu.uds.Ecu` is the pure UDS state machine (transport-agnostic). Two ways to drive it: **CAN mode** (virtual or VN1610 via `python-can` + `can-isotp`, for the real Vector topology) and **`bridge --fake`** (the `FakeVectorCom` double in `bridge/flexdiag_bridge.py` wraps `Ecu` directly for the all-software loopback topology, replacing the removed Option A `mock_ecu/server.py` TCP loopback).
 
 ```python
 # mock_ecu/mock_ecu.py (sketch, CAN mode)
@@ -600,18 +617,17 @@ NRC: 0x10 generalReject, 0x11 serviceNotSupported, 0x22 conditionsNotCorrect,
 flutter_app/lib/
 ├── transport/
 │   ├── transport.dart          # interface: connect/send/stream/dispose
-│   ├── tcp_transport.dart      # Option A (dart:io Socket, line framing)
 │   └── ws_transport.dart       # Option B (web_socket_channel)
 ├── protocol/
 │   ├── codec.dart              # encode commands / parse responses
 │   └── seq.dart                # correlation id allocator
 ├── codec/dtc.dart              # DTC decode
 ├── services/diag_service.dart  # high-level ops: readDtc(), security(), tp()
-├── state/                      # app state (active transport, log, dtc list)
-└── ui/                         # screens + transport switch + log view
+├── state/                      # app state (transport, log, dtc list)
+└── ui/                         # screens + log view
 ```
 
-`DiagService` exposes `Future<List<Dtc>> readDtc()`, `Future<bool> securityUnlock(int level)`, `void testerPresent(bool on)`, `Future<List<int>> raw(List<int> bytes)`. Switching transport rebuilds the `Transport` behind `DiagService`; the screens never know which is active.
+`DiagService` exposes `Future<List<Dtc>> readDtc()`, `Future<bool> securityUnlock(int level)`, `void testerPresent(bool on)`, `Future<List<int>> raw(List<int> bytes)`. Screens depend on `DiagService`, never on the concrete `WsTransport`, per `docs/04` §4 rule 1.
 
 ---
 
@@ -619,14 +635,13 @@ flutter_app/lib/
 
 ```
 terminal/
-├── transport_tcp.py            # Option A
 ├── transport_ws.py             # Option B
 ├── protocol.py                 # shared encode/parse + seq
 ├── repl.py                     # interactive commands (readdtc, sec 01, tp on, raw ..)
 └── script.py                   # run a .flex script of commands
 ```
 
-REPL commands map 1:1 to protocol verbs plus conveniences (`switch A|B`, `connect`, `trace on`). It is the reference client: if a capability works here against the Mock ECU, the Flutter UI only needs UI work.
+REPL commands map 1:1 to protocol verbs plus conveniences (`connectb`, `trace on`). It is the reference client: if a capability works here against the Mock ECU, the Flutter UI only needs UI work.
 
 ---
 
@@ -642,5 +657,3 @@ ECU ─► 67 02 ─► on diagResponse ─► PublishRsp ─► status=2 (OK SE
 bridge poll ─► RspSeq=23 status=2 ─► WS "23 OK SEC 01"
 Flutter ─► shows "Unlocked (level 01)"
 ```
-
-The same exchange over Option A replaces the sysvar hops with TCP line I/O; CAPL core logic is identical.

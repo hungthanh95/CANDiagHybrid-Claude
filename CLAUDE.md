@@ -8,7 +8,7 @@ This file is the **operating contract** for AI agents working on FlexDiag. Claud
 
 ## 1. What this project is
 
-A UDS (ISO 14229) diagnostic tool. A **Flutter** operator UI and a **Python terminal** test client drive **Vector CANoe/CANalyzer + VN1610** over two interchangeable transports (**A = CAPL TCP server**, **B = COM + System Variables / WebSocket bridge**), **without a CDD**. Capabilities v1: Read DTC, Tester Present, Security Access (seed/key via the Vector DLL inside CAPL), session control, clear DTC. A **Mock ECU** runs the whole stack offline.
+A UDS (ISO 14229) diagnostic tool. A **Flutter** operator UI and a **Python terminal** test client drive **Vector CANoe/CANalyzer + VN1610** over a single transport — **Option B = COM + System Variables / WebSocket bridge** — **without a CDD**. Capabilities v1: Read DTC, Tester Present, Security Access (seed/key via the Vector DLL inside CAPL), session control, clear DTC. A **Mock ECU** runs the whole stack offline.
 
 Components: `vector/capl/` (CAPL nodes), `bridge/` (Option B Python bridge), `mock_ecu/`, `terminal/`, `flutter_app/`, `protocol/`, `docs/`.
 
@@ -16,7 +16,7 @@ Components: `vector/capl/` (CAPL nodes), `bridge/` (Option B Python bridge), `mo
 
 ## 1a. Current sequencing priority (operator override, 2026-06-12)
 
-- **Option B first.** Option A (CAPL TCP) Vector bring-up depends on an uncertain CAPL TCP/IP API license. The Option A CAPL code (`flexdiag_core.can`, `flexdiag_tcp.can`) is written and `flexdiag-reviewer`-approved (M2) but its Vector-side verification is parked. Prioritize **Option B** (`flexdiag_sysvar.can` + `bridge/`, M3) next — both transports still ship eventually, this only reorders the work.
+- **Option A removed.** Option A (CAPL TCP server transport) was removed on 2026-06-12 due to uncertain CAPL TCP/IP API licensing on the operator's CANalyzer — see `docs/STATUS.md` §5 (R1, closed). Its CAPL code (`flexdiag_tcp.can`) and the matching Python/test code were deleted; `flexdiag_core.can` is untouched. Option B (`flexdiag_sysvar.can` + `bridge/`, M3) is now the sole transport and the active priority.
 - **Flutter deferred.** `flutter_app/` (W5/M5) is paused. The Python terminal (`terminal/`) is the primary test client for all capabilities until Flutter is picked back up.
 
 ---
@@ -28,9 +28,9 @@ Work is split so the strongest model handles low-volume / high-stakes decisions 
 | Role | Subagent | Model | Owns |
 |------|----------|-------|------|
 | **Architect / Reviewer** | `flexdiag-reviewer` | Opus 4.8 | Reviews every change to the wire protocol, sysvar layout, `flexdiag_core.can`, security (`0x27`) flow, and ADRs. Approves or blocks merges into protected areas. |
-| **Developer** | `flexdiag-developer` | Sonnet 4.6 | Implements bridge, Mock ECU, terminal, Flutter UI, and CAPL transport nodes against the frozen protocol. |
+| **Developer** | `flexdiag-developer` | Sonnet 4.6 | Implements bridge, Mock ECU, terminal, Flutter UI, and the CAPL transport node against the frozen protocol. |
 | **Tester** | `flexdiag-tester` | Sonnet 4.6 (writes tests) / Haiku 4.5 (runs regressions) | Writes unit tests (codecs), negative-path tests (NRC `0x78`/`0x35`/`0x33`), and runs `.flex` regression scripts against the Mock ECU. |
-| **Status / PM** | `flexdiag-status` | Haiku 4.5 | Keeps `docs/STATUS.md` current: milestone state (M0–M6), capability × transport × tool pass matrix, and FR→test traceability. |
+| **Status / PM** | `flexdiag-status` | Haiku 4.5 | Keeps `docs/STATUS.md` current: milestone state (M0, M1, M3, M5, M6 — M2/M4 removed), capability × tool pass matrix, and FR→test traceability. |
 | **PR shipper** | `flexdiag-shipper` | Sonnet 4.6 | Owns the PR lifecycle: opens PRs from feature branches to `main`, reviews them against `docs/04` §7 (git rules), and merges once CI is green and approvals are in. Routes protected-area PRs to `flexdiag-reviewer` for approval; does **not** self-approve them. |
 
 > If a model alias isn't available in your Claude Code build, map it via the model-config environment variables (see Claude Code docs). For larger architectural decisions you may run the reviewer on a higher tier (e.g. Fable 5) — but everyday reviews use Opus.
@@ -42,14 +42,14 @@ Work is split so the strongest model handles low-volume / high-stakes decisions 
 These restate `docs/04` for agent execution. **Violations block a merge.**
 
 1. **Mock-first.** New behaviour is proven against the Mock ECU (software loopback) before any Vector integration.
-2. **Protocol is frozen after M0.** Any change to the wire protocol (`docs/03` §1) or sysvar layout (§2) requires: a `proto=N` bump in the handshake, the spec doc, **both** transports, and **both** clients updated in the *same* PR, and **reviewer approval**. No partial protocol changes.
+2. **Protocol is frozen after M0.** Any change to the wire protocol (`docs/03` §1) or sysvar layout (§2) requires: a `proto=N` bump in the handshake, the spec doc, the transport, and **both** clients updated in the *same* PR, and **reviewer approval**. No partial protocol changes.
 3. **Developer does not self-approve protected changes.** Any PR touching these paths MUST be reviewed by `flexdiag-reviewer` before merge:
    - `vector/capl/flexdiag_core.can`
    - `protocol/**` and `docs/03-TECHNICAL-DETAIL.md` (protocol/sysvar sections)
    - anything in the security (`0x27`) path
 4. **Diagnostics live in CAPL, never in COM.** The bridge only moves System Variables. Do not add diagnostic logic to the bridge.
 5. **No CDD assumptions.** Only raw UDS bytes cross the protocol boundary; all DTC/DID/NRC decoding is client-side.
-6. **Both transports, every capability.** A capability is "done" only when it passes on Option A *and* Option B. Release requires passing on CANoe *and* CANalyzer.
+6. **Single transport, every capability.** A capability is "done" only when it passes on Option B. Release requires passing on CANoe *and* CANalyzer.
 7. **Secrets never committed.** Real seed-key DLLs, ECU keys, and customer CAN matrices stay out of the repo. Only the *test* DLL/algorithm and Mock ECU live in-repo. Generated keys are never written to persistent logs.
 8. **Every PR records its test topology** (software loopback / virtual CAN / VN1610+real ECU) and tool (CANoe/CANalyzer). `flexdiag-status` reflects this in `docs/STATUS.md`.
 
@@ -69,7 +69,7 @@ These restate `docs/04` for agent execution. **Violations block a merge.**
 
 - Commits: Conventional Commits with scope, e.g. `feat(capl): add security key-send continuation`.
 - Protocol verbs UPPERCASE; sysvars `Diag::PascalCase`; CAPL funcs `PascalCase`; Python `snake_case`; Dart `snake_case.dart`.
-- Defaults: ECU qualifier `ECU1`, baud 500 kbit/s, phys req `0x7E0` / resp `0x7E8`, TCP `9000`, WS `127.0.0.1:8770`, tester-present 2000 ms suppress-positive.
+- Defaults: ECU qualifier `ECU1`, baud 500 kbit/s, phys req `0x7E0` / resp `0x7E8`, WS `127.0.0.1:8770`, tester-present 2000 ms suppress-positive.
 - Localhost-only by default; remote binding is explicit opt-in (not part of v1 hardening).
 
 ---

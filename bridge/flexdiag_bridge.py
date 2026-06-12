@@ -21,7 +21,7 @@ agnostic over which ``*Com`` backend is in use (CLAUDE.md rule 4).
 The bridge never interprets diagnostic UDS bytes beyond the non-UDS ``OK
 TP``/``OK SEC <level>`` formatting in :func:`encode_response` (CLAUDE.md
 rule 5 / docs/03 §4.2's note) -- it only moves ``Diag::*`` System Variable
-values to/from the wire protocol (``protocol.wire``), shared with Option A.
+values to/from the wire protocol (``protocol.wire``).
 """
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ class FakeVectorCom:
     Same public surface as :class:`VectorCom`: ``cmd_q``, ``evt_q``,
     ``.tool`` (``"Mock"``), ``.start()``, ``.stop()``. Additionally exposes
     ``.ecu`` (the :class:`Ecu` instance) so tests can call
-    :meth:`Ecu.inject_next`, mirroring ``MockServer.ecu``.
+    :meth:`Ecu.inject_next`.
     """
 
     tool = "Mock"
@@ -248,8 +248,8 @@ class FakeVectorCom:
     def _respond_uds(self, seq: int, kind: int, req: bytes) -> None:
         """Dispatch ``req`` to :attr:`ecu`, honoring NRC-injection flags.
 
-        Mirrors ``MockServer._respond_uds``'s "pending then final" and
-        "drop" handling (docs/03 §1.4/§1.5; ``mock_ecu/server.py``).
+        Implements the "pending then final" and "drop" handling described
+        in docs/03 §1.4/§1.5.
         """
         if self.ecu.consume_drop():
             return  # simulate a hang: no event pushed
@@ -265,7 +265,7 @@ class FakeVectorCom:
         self.evt_q.put((seq, status, kind, rsp))
 
     def _do_security(self, seq: int, level: int) -> None:
-        """Orchestrate the seed/key dance, mirroring ``MockServer._handle_security``.
+        """Orchestrate the seed/key dance against :attr:`ecu`.
 
         ``level`` is the odd level requested via ``SECURITY <level>``. On
         full success pushes ``(seq, STATUS_OK, KIND_SECURITY, 67 <evenLevel>)``
@@ -411,9 +411,9 @@ async def _pump_events(
 async def _dispatch_line(websocket: object, vec: VectorCom | FakeVectorCom, line: str) -> bool:
     """Handle one client -> server line. Returns True if the connection should close.
 
-    Mirrors ``mock_ecu/server.py``'s ``_dispatch`` ERR-400-vs-422 pattern:
-    unknown verbs -> ``ERR 400 unknown_verb`` (checked before
-    ``parse_command``); malformed args/hex -> ``ERR 422 bad_args``.
+    Implements the ERR-400-vs-422 dispatch pattern: unknown verbs ->
+    ``ERR 400 unknown_verb`` (checked before ``parse_command``); malformed
+    args/hex -> ``ERR 422 bad_args``.
     """
     stripped = line.strip()
     if not stripped:
@@ -541,11 +541,10 @@ async def serve(host: str, port: int, vec: VectorCom | FakeVectorCom) -> None:
 class BridgeServer:
     """Synchronous test harness around :func:`serve` + :class:`FakeVectorCom`.
 
-    Mirrors :class:`mock_ecu.server.MockServer`'s ``start()``/``stop()``/
-    ``bound_port``/``.ecu`` surface so Option-B tests can be written the same
-    way as Option-A tests against ``MockServer`` (mock-first, CLAUDE.md rule
-    1). Runs the bridge's asyncio WebSocket server on a dedicated background
-    thread; ``port=0`` binds an ephemeral port, exposed via
+    Provides ``start()``/``stop()``/``bound_port``/``.ecu`` so Option-B
+    tests can drive the bridge against the Mock ECU (mock-first, CLAUDE.md
+    rule 1). Runs the bridge's asyncio WebSocket server on a dedicated
+    background thread; ``port=0`` binds an ephemeral port, exposed via
     :attr:`bound_port` once :meth:`start` returns.
 
     Args:

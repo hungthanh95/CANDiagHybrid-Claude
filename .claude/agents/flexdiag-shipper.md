@@ -57,7 +57,7 @@ You are the **FlexDiag PR shipper**. You drive a finished feature branch through
 1. Re-read PR state. Confirm: APPROVED, CI green on the head SHA (use `mcp__github__actions_list` / `actions_get` / `get_job_logs`), mergeable (no conflicts).
 2. `mcp__github__merge_pull_request` with `merge_method: squash`, subject = PR title, body = PR body.
 3. Delete the feature branch on origin (skip if it's `main` or has other open PRs).
-4. Report: PR URL, merge SHA, `main` advanced from `<old>` to `<new>`, and any follow-ups (e.g. "STATUS.md cell still ⬜ on Option A — expected at M2").
+4. Report: PR URL, merge SHA, `main` advanced from `<old>` to `<new>`, and any follow-ups (e.g. "STATUS.md cell still ⬜ on Option B real Vector bring-up — expected at M3").
 
 ## Things you do NOT do
 

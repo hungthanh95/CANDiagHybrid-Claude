@@ -1,8 +1,7 @@
-"""Interactive REPL for the FlexDiag terminal client (proto=1, Option A/TCP).
+"""Interactive REPL for the FlexDiag terminal client (proto=1, Option B).
 
 Commands map 1:1 to protocol verbs plus conveniences (``docs/03`` §8):
 
-- ``connect [host] [port]`` -- Option A (TCP), default ``127.0.0.1 9000``.
 - ``connectb [host] [port]`` -- Option B (WebSocket bridge), default
   ``127.0.0.1 8770``.
 - ``readdtc [mask_hex]``
@@ -40,8 +39,7 @@ from protocol.wire import (
     hex_to_bytes,
     parse_response,
 )
-from terminal.transport_tcp import TcpTransport, TransportError
-from terminal.transport_ws import WsTransport
+from terminal.transport_ws import TransportError, WsTransport
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +48,7 @@ class Repl:
     """Holds connection/session state for the interactive terminal."""
 
     def __init__(self) -> None:
-        self.transport: TcpTransport | WsTransport | None = None
+        self.transport: WsTransport | None = None
         self.seq_alloc = SeqAllocator()
         self.trace = False
         self._reader_task: asyncio.Task[None] | None = None
@@ -59,15 +57,6 @@ class Repl:
     # ------------------------------------------------------------------
     # connection management
     # ------------------------------------------------------------------
-
-    async def connect(self, host: str = "127.0.0.1", port: int = 9000) -> None:
-        if self.transport is not None:
-            await self.disconnect()
-        transport = TcpTransport(host, port)
-        await transport.connect()
-        self.transport = transport
-        self._reader_task = asyncio.create_task(self._read_loop())
-        print(f"connected to {host}:{port}")
 
     async def connectb(self, host: str = "127.0.0.1", port: int = 8770) -> None:
         if self.transport is not None:
@@ -189,7 +178,7 @@ class Repl:
     async def run_command(self, text: str) -> Response | None:
         """Run one REPL command line. Returns the server Response, if any.
 
-        Returns ``None`` for purely-local commands (``connect``, ``trace``,
+        Returns ``None`` for purely-local commands (``connectb``, ``trace``,
         ``quit``) that don't produce a server response.
         """
         parts = text.strip().split()
@@ -197,12 +186,6 @@ class Repl:
             return None
         cmd, *rest = parts
         cmd = cmd.lower()
-
-        if cmd == "connect":
-            host = rest[0] if len(rest) > 0 else "127.0.0.1"
-            port = int(rest[1]) if len(rest) > 1 else 9000
-            await self.connect(host, port)
-            return None
 
         if cmd == "connectb":
             host = rest[0] if len(rest) > 0 else "127.0.0.1"
@@ -223,7 +206,7 @@ class Repl:
 
         # Everything else needs a connection.
         if self.transport is None:
-            print("not connected (use: connect [host] [port])")
+            print("not connected (use: connectb [host] [port])")
             return None
 
         seq = self.seq_alloc.next()
@@ -286,14 +269,14 @@ async def run_repl(initial_command: str | None = None) -> None:
     """Run the interactive REPL loop on stdin until ``quit``/EOF.
 
     Args:
-        initial_command: If given, run this command (e.g. ``"connect 127.0.0.1
-            9000"`` or ``"connectb 127.0.0.1 8770"``) before handing control to
-            the interactive loop. Used by ``__main__.py`` to implement
-            ``--transport``/``--host``/``--port``/``--url`` (docs/05 §7.1/§7.2).
+        initial_command: If given, run this command (e.g. ``"connectb
+            127.0.0.1 8770"``) before handing control to the interactive
+            loop. Used by ``__main__.py`` to implement
+            ``--host``/``--port``/``--url`` (docs/05 §7).
     """
     repl = Repl()
     loop = asyncio.get_event_loop()
-    print("FlexDiag terminal (proto=1). Type 'connect' to begin, 'quit' to exit.")
+    print("FlexDiag terminal (proto=1). Type 'connectb' to begin, 'quit' to exit.")
     if initial_command is not None:
         try:
             await repl.run_command(initial_command)
