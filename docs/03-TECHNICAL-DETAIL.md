@@ -108,7 +108,7 @@ Namespace `Diag`. The bridge writes the request and bumps a trigger; CAPL reacts
 | `Diag::ReqTrigger` | Int | bridge | Incremented to fire the request (CAPL reacts on change). |
 | `Diag::RspData` | Data (byte array) | CAPL | Raw response bytes (positive or `7F..`). |
 | `Diag::RspSeq` | Int | CAPL | Echoed correlation id. |
-| `Diag::RspStatus` | Int | CAPL | 0=positive, 1=negative(NRC), 2=ok(non-UDS), 3=error. |
+| `Diag::RspStatus` | Int | CAPL | `0`=positive UDS response (`RspData` = raw positive response bytes). `1`=negative response/NRC (`RspData` = `7F <sid> <nrc>`, 3 bytes; includes `7F <sid> 78` "pending" -- non-terminal on the CAPL side, core re-arms and a second `RspTrigger` bump follows later with the same `RspSeq`). `2`=OK (non-UDS): if `RspKind` is 5 or 6 -> `OK TP` (`RspData` empty); if `RspKind` is 3 -> `OK SEC <level>` where `level = RspData[1] - 1` (`RspData` = `67 <evenLevel>`, the odd level originally requested via `SECURITY <level>` is `evenLevel - 1`). `3`=ERR `keygen_fail` (wire `ERR 500 keygen_fail`, `RspData` empty). `4`=ERR `ecu_timeout` (wire `ERR 504 ecu_timeout`; `RspData` may carry `7F 00 00` but the bytes are ignored -- status alone determines this). |
 | `Diag::RspKind` | Int | CAPL | Echoes the `ReqKind` (same 0–6 enum) of the operation this response belongs to. Lets the bridge format `OK TP` / `OK SEC <level>` without per-seq state. |
 | `Diag::RspTrigger` | Int | CAPL | Incremented when a response is ready (bridge reacts on change). |
 
@@ -353,41 +353,35 @@ void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 /* flexdiag_sysvar.can — System Variable transport (Option B).
  * Driven by the Python COM bridge writing Diag::Req* and bumping Diag::ReqTrigger.
  */
-variables { dword gSecSeq; byte gSecLevel; int gSecActive; }
-
 on sysvar Diag::ReqTrigger
 {
-  dword seq = @Diag::ReqSeq;
-  int   kind = @Diag::ReqKind;
-  int   arg  = @Diag::ReqArg;
+  dword seq  = (dword)@Diag::ReqSeq;
+  int   kind = (int)@Diag::ReqKind;
+  int   arg  = (int)@Diag::ReqArg;
   byte  buf[4095]; dword len;
+  byte  noData[1];
 
   switch (kind) {
-    case 0: // RAW
-      len = sysGetVariableData(...Diag::ReqData..., buf);
-      gReqKind = 0;          // set at dispatch, not inside SendRaw (would clobber gReqKind=3
-                              // set by SecuritySendKey() just before its own SendRaw call)
-      SendRaw(seq, buf, len);
+    case 0:                                            // RAW
+      len = sysGetVariableData(sysvar(Diag::ReqData), buf, elcount(buf));
+      DoRaw(seq, buf, len);
       break;
-    case 1: DoReadDtc(seq, (byte)arg); break;          // arg = mask
-    case 2: DoClearDtc(seq, 0xFF,0xFF,0xFF); break;     // v1: group fixed to FF FF FF (full clear); no other call is sanctioned
-    case 3: gSecActive=1; gSecSeq=seq; gSecLevel=(byte)arg;
-            DoSecuritySeed(seq,(byte)arg); break;
-    case 4: DoSession(seq,(byte)arg); break;
-    case 5: DoTesterPresent(1); PublishRsp(seq,2,buf,0,5); break;
-    case 6: DoTesterPresent(0); PublishRsp(seq,2,buf,0,6); break;
+    case 1: DoReadDtcByStatusMask(seq, (byte)arg); break;  // arg = mask
+    case 2: DoClearDtc(seq); break;                        // v1: fixed FF FF FF full clear
+    case 3: DoSecurityRequestSeed(seq, (byte)arg); break;  // arg = odd level
+    case 4: DoSessionControl(seq, (byte)arg); break;
+    case 5: DoTpStart(); PublishRsp(seq, 2, noData, 0, 5); break;  // -> "OK TP"
+    case 6: DoTpStop();  PublishRsp(seq, 2, noData, 0, 6); break;  // -> "OK TP"
   }
 }
 
-/* Implements the core's transport hook by writing response sysvars. */
+/* Implements the core's transport hook: generic sysvar passthrough. No
+ * per-status special-casing -- all RspStatus -> wire-line formatting
+ * (RSP/NRC/OK TP/OK SEC/ERR) happens in the Python bridge (encode_response),
+ * per §2's RspStatus table. */
 void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 {
-  // Security continuation identical to TCP node:
-  if (gSecActive && status==0 && len>=2 && data[0]==0x67) {
-    if (data[1]==gSecLevel) { SecuritySendKey(seq,gSecLevel,&data[2],len-2); return; }
-    if (data[1]==gSecLevel+1){ gSecActive=0; status=2; /* OK SEC */ }
-  }
-  sysSetVariableData(...Diag::RspData..., data, len);
+  sysSetVariableData(sysvar(Diag::RspData), data, len);
   @Diag::RspSeq    = seq;
   @Diag::RspStatus = status;
   @Diag::RspKind   = kind;
@@ -395,7 +389,21 @@ void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 }
 ```
 
-> Exact sysvar data get/set CAPL calls (`sysGetVariableData` / `sysSetVariableData` / the `@` accessor for scalars) vary slightly by tool version; isolate them and confirm against the installed Help.
+> **Note on the sketch above vs. the implementation.** Like `flexdiag_tcp.can`
+> (§3.2's note), this transport node does **not** track security state
+> locally: `flexdiag_core.can` owns `gSecActive`/`gSecSeq`/`gSecLevel`
+> entirely. For `kind==3` the node calls `DoSecurityRequestSeed(seq, arg)`
+> and nothing else -- that single call sets `gSecActive=1; gSecSeq=seq;
+> gSecLevel=arg` inside `flexdiag_core.can`. On the final `67 <evenLevel>`
+> response (`status==2`, `kind==3`), `PublishRsp` is a pure passthrough: the
+> bridge derives `oddLevel = RspData[1] - 1` itself (same derivation as the
+> TCP node's `OK SEC` line, see §3.2's note), so no `_req_arg`/seq-keyed
+> side-channel is needed on either the CAPL or the bridge side.
+>
+> Exact sysvar data get/set CAPL calls (`sysGetVariableData` /
+> `sysSetVariableData` / the `@`/`sysvar()` accessor syntax for scalars and
+> Data variables) vary slightly by tool version; isolate them and confirm
+> against the installed CANoe/CANalyzer Help.
 
 ---
 
@@ -416,7 +424,6 @@ class VectorCom:
     def __init__(self, prefer="auto"):
         self.cmd_q  = queue.Queue()     # (seq, kind, arg, data) from clients
         self.evt_q  = queue.Queue()     # (seq, status, kind, data) to clients
-        self._req_arg = {}              # seq -> arg, for OK SEC <level> formatting (see §4.2)
         self._stop  = threading.Event()
         self.thread = threading.Thread(target=self._run, args=(prefer,), daemon=True)
 
@@ -449,7 +456,6 @@ class VectorCom:
                 sv("ReqSeq").Value  = seq
                 sv("ReqKind").Value = kind
                 sv("ReqArg").Value  = arg
-                self._req_arg[seq] = arg            # for OK SEC <level> formatting (§4.2)
                 sv("ReqTrigger").Value = sv("ReqTrigger").Value + 1
             except queue.Empty:
                 pass
@@ -472,7 +478,7 @@ async def handle(ws, vec):
         loop = asyncio.get_event_loop()
         while True:
             seq, status, kind, data = await loop.run_in_executor(None, vec.evt_q.get)
-            await ws.send(encode_response(seq, status, kind, data, vec._req_arg.pop(seq, None)))
+            await ws.send(encode_response(seq, status, kind, data))
     asyncio.create_task(pump_events())
     async for line in ws:
         seq, kind, arg, data = parse_command(line)   # maps verbs -> sysvar kinds
@@ -488,8 +494,8 @@ async def handle(ws, vec):
 - Never call `Dispatch`/sysvar from the asyncio thread — only via `cmd_q`. This satisfies NFR-10.
 - `prefer` lets the operator force `CANoe` or `CANalyzer`; `auto` tries CANoe first.
 - The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for both transports; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
-- Formatting `OK SEC <level>` and `OK TP` is response *formatting*, not diagnostic logic: the bridge reads `(RspStatus, RspKind)` from sysvars plus the `ReqArg` (security level) it itself sent for that `seq`, and renders the literal text. This does not violate "diagnostics live in CAPL, never in COM" (CLAUDE.md §3 rule 4) because no UDS request/response bytes are interpreted — only the non-UDS `OK` line is composed.
-- `encode_response` needs the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`), but that level isn't in the `(seq, status, kind, data)` 4-tuple from `evt_q`. `VectorCom` keeps a small per-seq dict `self._req_arg` populated when the command is sent (`self._req_arg[seq] = arg`); the caller pops `self._req_arg.pop(seq, None)` for the matching `seq` and passes it to `encode_response` to render `<level_hex>`.
+- Formatting `OK SEC <level>` and `OK TP` is response *formatting*, not diagnostic logic: the bridge reads `(RspStatus, RspKind, RspData)` from the `evt_q` tuple and renders the literal text. This does not violate "diagnostics live in CAPL, never in COM" (CLAUDE.md §3 rule 4) because no UDS request/response bytes are interpreted — only the non-UDS `OK` line is composed.
+- `encode_response` derives the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`) directly from `data`: `RspData = 67 <evenLevel>`, so `level = data[1] - 1` (the odd level originally requested via `SECURITY <level>`). This is the same derivation `flexdiag_tcp.can` uses for Option A (§3.2's note) -- no per-seq `_req_arg` side-channel is needed on either transport.
 
 ---
 
