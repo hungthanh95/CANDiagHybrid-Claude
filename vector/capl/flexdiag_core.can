@@ -37,6 +37,12 @@ variables
   // P2*/timeout (docs/05 §3) so it only fires when that layer doesn't.
   msTimer gReqTimeout;
   const dword kReqTimeoutMs = 5000;
+
+  // Hex-format scratch buffer for Write-window logging (docs/04 §3.7).
+  // Must live in `variables` -- CAPL has no file-scope declarations outside
+  // a variables block (parse error 1002).
+  char gHexBuf[3 * 4095];
+  char gHexNibble[17] = "0123456789ABCDEF";  // 16 chars + NUL (C-string init)
 }
 
 /* ---- Transport hook: each transport node defines this ----
@@ -180,7 +186,8 @@ on diagResponse ECU1.*
   diagGetPrimitiveData(this, gRsp, len);
   gRspLen = len;
 
-  write("RSP seq=%d: %s", gReqSeq, GetHexString(gRsp, len));
+  GetHexString(gRsp, len);
+  write("RSP seq=%d: %s", gReqSeq, gHexBuf);
 
   if (diagIsNegativeResponse(this))
   {
@@ -247,11 +254,10 @@ on timer gReqTimeout
   PublishRsp(gReqSeq, 4, timeoutRsp, 3, gReqKind);  // tool-side ERR 504 ecu_timeout
 }
 
-/* Hex-format helper for Write-window logging (docs/04 §3.7). */
-char gHexBuf[3 * 4095];
-char gHexNibble[16] = "0123456789ABCDEF";
-
-char* GetHexString(byte data[], dword len)
+/* Hex-format helper for Write-window logging (docs/04 §3.7). Writes into
+ * the global gHexBuf -- CAPL does not support pointer return types
+ * ("char*"), so this is void and callers read gHexBuf afterwards. */
+void GetHexString(byte data[], dword len)
 {
   dword i;
   if (len > kMaxLen) len = kMaxLen;
@@ -263,5 +269,4 @@ char* GetHexString(byte data[], dword len)
   }
   if (len > 0) gHexBuf[len * 3 - 1] = 0;
   else gHexBuf[0] = 0;
-  return gHexBuf;
 }
