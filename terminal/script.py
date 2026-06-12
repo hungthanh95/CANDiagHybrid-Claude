@@ -10,7 +10,7 @@ A ``.flex`` file is one REPL command per line:
   positively (``RSP``/``OK``/``PONG``/``READY``), that line fails.
 - Any other line is run as if typed into the REPL and must produce a
   positive/non-error response (``RSP``/``OK``/``PONG``/``READY``) or no
-  response at all (local commands such as ``connect``/``trace``). ``NRC``
+  response at all (local commands such as ``connectb``/``trace``). ``NRC``
   or ``ERR`` on such a line is a failure.
 
 Execution is fail-fast: the first unexpected failure stops the script.
@@ -24,7 +24,7 @@ import logging
 
 from protocol.wire import Verb
 from terminal.repl import Repl
-from terminal.transport_tcp import TransportError
+from terminal.transport_ws import TransportError
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def run_script(path: str) -> int:
             break
 
         if resp is None:
-            # Local command (connect/trace/etc.) -- no pass/fail verdict
+            # Local command (connectb/trace/etc.) -- no pass/fail verdict
             # unless it was expected to be negative, which is meaningless
             # for local commands.
             if expect_negative:

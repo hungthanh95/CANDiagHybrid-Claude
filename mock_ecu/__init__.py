@@ -1,6 +1,9 @@
-"""Mock ECU: UDS responder + TCP-loopback wire-protocol front-end.
+"""Mock ECU: pure UDS responder state machine.
 
-For M1 (software loopback) this package stands in for the entire
-CAPL+ECU stack; the terminal connects to ``mock_ecu.server.MockServer``
-over TCP exactly as it would to a real Option A CAPL TCP transport.
+:class:`mock_ecu.uds.Ecu` implements the UDS request/response state machine
+(seed/key security, DTC table, session control, NRC injection) used for
+mock-first testing. It has no transport of its own -- Option B's
+``bridge --fake`` mode (:class:`bridge.flexdiag_bridge.FakeVectorCom`) wraps
+it to provide the same software-loopback testing that the terminal and
+``.flex`` scripts drive over the WebSocket bridge.
 """

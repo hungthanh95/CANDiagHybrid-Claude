@@ -1,8 +1,9 @@
 """Pure UDS responder logic for the Mock ECU.
 
 No I/O here — :class:`Ecu` is a pure state machine over raw UDS request/
-response bytes (``docs/03-TECHNICAL-DETAIL.md`` §5 sketch). The TCP framing
-lives in :mod:`mock_ecu.server`.
+response bytes (``docs/03-TECHNICAL-DETAIL.md`` §5 sketch). The Option B
+wire framing lives in :mod:`bridge.flexdiag_bridge` (``FakeVectorCom``,
+``bridge --fake``).
 
 Implements, per the §5 sketch and the M1 task spec:
 
@@ -78,13 +79,13 @@ class Ecu:
         - ``nrc``: the next call to :meth:`handle` returns
           ``7F <sid> nrc`` instead of the real response (where ``sid`` is
           the SID of that next request).
-        - ``pending_before``: the framing layer (``mock_ecu.server``) should
-          emit ``7F <sid> 0x78`` (responsePending) once for the next
+        - ``pending_before``: the framing layer (``bridge.flexdiag_bridge``)
+          should emit ``7F <sid> 0x78`` (responsePending) once for the next
           request, then immediately re-dispatch to get the *real* response
           and send that as the terminal response. :meth:`handle` itself
           does not implement the 0x78 framing -- it only exposes the armed
           flag via :attr:`pending_before_armed` / :meth:`consume_pending_before`
-          so the server can implement the two-message sequence.
+          so the bridge can implement the two-message sequence.
         - ``drop``: the framing layer should close the connection without
           sending any response for the next request. :meth:`handle` exposes
           this via :attr:`drop_armed` / :meth:`consume_drop`.

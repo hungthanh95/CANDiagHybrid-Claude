@@ -3,13 +3,11 @@
 Connects to the Python bridge (``bridge/flexdiag_bridge.py``) at
 ``ws://host:port/`` and exchanges newline-free protocol lines (the
 ``websockets`` library delivers one text message per ``send``/iteration; the
-bridge sends one protocol line per message, matching the TCP transport's
-one-line-per-read framing).
+bridge sends one protocol line per message).
 
-Mirrors :class:`terminal.transport_tcp.TcpTransport`'s public surface
-exactly (``connect``, ``send``, ``recv_lines``, ``close``, ``closed``,
-``TransportError``) so :class:`terminal.repl.Repl` can use either transport
-with no changes to its command-dispatch/render logic (CLAUDE.md rule 4).
+Exposes ``connect``, ``send``, ``recv_lines``, ``close``, ``closed``, and
+``TransportError`` so :class:`terminal.repl.Repl` depends only on this
+interface (CLAUDE.md rule 4) and is unaware of the underlying transport.
 """
 
 from __future__ import annotations
@@ -18,11 +16,14 @@ import logging
 from collections.abc import AsyncIterator
 
 from protocol.wire import MAX_LINE
-from terminal.transport_tcp import TransportError
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["TransportError", "WsTransport"]
+
+
+class TransportError(Exception):
+    """Raised when the WebSocket connection is unavailable or drops unexpectedly."""
 
 
 class WsTransport:
