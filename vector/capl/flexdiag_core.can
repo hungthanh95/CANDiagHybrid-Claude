@@ -28,6 +28,15 @@ variables
   int   gSecActive;
   dword gSecSeq;
   byte  gSecLevel;        // odd level requested via SECURITY <level>
+
+  // Backstop watchdog for "ECU never responded" (R4: diagnostic-timeout
+  // event names are not portable across CAPL versions -- msTimer is).
+  // Armed on every SendRaw(); cancelled at the top of on diagResponse();
+  // re-armed if the response is a 0x78 "pending" (non-terminal, docs/03
+  // §1.4/§1.5). Set comfortably above the diagnostic layer's configured
+  // P2*/timeout (docs/05 §3) so it only fires when that layer doesn't.
+  msTimer gReqTimeout;
+  const dword kReqTimeoutMs = 5000;
 }
 
 /* ---- Transport hook: each transport node defines this ----
@@ -58,6 +67,7 @@ void SendRaw(dword seq, byte data[], dword len)
   diagResize(req, len);
   diagSetPrimitiveData(req, data, len);
   diagSendRequest(req);
+  setTimer(gReqTimeout, kReqTimeoutMs);
 }
 
 /* ---- High-level helpers: each sets gReqKind so PublishRsp() can echo it
@@ -163,6 +173,8 @@ on diagResponse ECU1.*
   long len;
   byte oddLevel, evenLevel;
 
+  cancelTimer(gReqTimeout);   // ECU answered -- disarm the watchdog (re-armed below if 0x78 pending)
+
   len = diagGetPrimitiveSize(this);
   if (len > kMaxLen) len = kMaxLen;
   diagGetPrimitiveData(this, gRsp, len);
@@ -177,6 +189,7 @@ on diagResponse ECU1.*
     if (len >= 3 && gRsp[2] == 0x78)
     {
       PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> 78 (intermediate)
+      setTimer(gReqTimeout, kReqTimeoutMs);          // still waiting on a final response
       return;
     }
 
@@ -216,13 +229,14 @@ on diagResponse ECU1.*
   PublishRsp(gReqSeq, 0, gRsp, len, gReqKind);
 }
 
-/* ECU did not respond within the diagnostic timeout (P2*/timeout exhausted).
- * Verify the exact CAPL event name against your installed Help -- some
- * versions surface this via "on diagTimeout ECU1.*" or
- * "on diagRequest ECU1.* / .TimeoutOccurred" rather than "on errorFrame".
- * Reported as status=1 with a synthetic NRC so the transport always emits a
- * terminal response (docs/03 §1.5: exactly one terminal response per command). */
-on diagOnTimeout ECU1.*
+/* Backstop: ECU never answered within kReqTimeoutMs of the last SendRaw()
+ * (gReqTimeout armed in SendRaw(), cancelled/re-armed in on diagResponse()).
+ * "on diagOnTimeout"/"on diagTimeout" are not valid CAPL diagnostic events
+ * (confirmed: parser error on CANalyzer) -- msTimer is portable across tool
+ * versions (R4). Reported as status=4 (ERR 504 ecu_timeout, tool-side, not
+ * an ECU NRC -- docs/04 §1.5) so the transport always emits exactly one
+ * terminal response per command (docs/03 §1.5). */
+on timer gReqTimeout
 {
   byte timeoutRsp[3];
   if (gSecActive && gReqSeq == gSecSeq) gSecActive = 0;
