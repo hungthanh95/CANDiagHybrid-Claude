@@ -1,6 +1,6 @@
 # FlexDiag — Project Status
 
-**Maintained by:** `flexdiag-status` (Haiku) · **Updated:** `2026-06-12` (PR #5 merged: Option A removed, Option B is sole transport; M3 mock-verified, Vector bring-up pending)
+**Maintained by:** `gatekeeper` (Opus) · **Updated:** `2026-06-12` (PR #7 merged: agents consolidated to 2-node `builder`/`gatekeeper` setup; PR #5: Option A removed, Option B is sole transport; M3 mock-verified, Vector bring-up pending)
 
 > Single source of truth for project state. Do not mark anything ✅ without a tester-confirmed result on Option B. Legend: ✅ pass · 🟡 partial · ⬜ not yet · ❌ failing.
 
@@ -72,6 +72,7 @@ Cells show current verified state. A capability is "done" only when Option B is 
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-12 | PR #7 / a3157b5 | chore(meta)!: consolidate 5-agent setup (`flexdiag-developer`/`-tester`/`-reviewer`/`-shipper`/`-status`) into 2 nodes — `builder` (Sonnet, impl+tests in TDD loop) and `gatekeeper` (Opus, review+commit+PR+merge+STATUS.md); CLAUDE.md §2/§3.3/§4/§6 rewritten; separation of duties preserved at builder↔gatekeeper boundary; no product-code or behaviour change | n.a. | n.a. |
 | 2026-06-12 | PR #5 / 3e1588a | chore!: remove Option A (CAPL TCP node, terminal TCP transport, MockServer, mock_ecu CLI, 5 .flex scripts, 3 test modules; 12 files deleted); operator decision: CAPL TCP/IP API license uncertainty → Option B sole transport; 129→109 tests; protocol/wire `READY` field retained as always-`"B"` (proto=1 unchanged); `flexdiag_core.can` + 0x27 security untouched; M2/M4 marked Removed (numbers preserved); R1 closed; FR-10/12/13/14 marked Removed; reviewer-approved | software loopback | n.a. |
 | 2026-06-12 | `c52fedd` | test(bridge): add 42 new tests for Option B (32 unit: `FakeVectorCom` dispatch/NRC/status mapping; 5 negative: 0x78/0x35/0x33/drop/BYE; 5 .flex capability scripts); combined matrix via `cap_matrix.py`; 129/129 passing; ruff+black clean | software loopback | n.a. |
 | 2026-06-12 | `a1a9d18` | feat(bridge): add `bridge/` package (`flexdiag_bridge.py` VectorCom + FakeVectorCom mock double, WS server, encode_response RspStatus mapping; `terminal/transport_ws.py` WsTransport; `terminal/repl.py` connectb command; `pyproject.toml` websockets dep); M3 code-complete | software loopback | n.a. |
