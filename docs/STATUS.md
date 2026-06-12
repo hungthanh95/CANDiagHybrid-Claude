@@ -1,6 +1,6 @@
 # FlexDiag — Project Status
 
-**Maintained by:** `flexdiag-status` (Haiku) · **Updated:** `____-__-__`
+**Maintained by:** `flexdiag-status` (Haiku) · **Updated:** `2026-06-12`
 
 > Single source of truth for project state. Do not mark anything ✅ without a tester-confirmed result on **both** transports. Legend: ✅ pass · 🟡 partial · ⬜ not yet · ❌ failing.
 
@@ -10,7 +10,7 @@
 
 | Milestone | Definition of done | Status |
 |-----------|--------------------|--------|
-| **M0** Protocol frozen | Wire protocol + sysvar layout signed off | ⬜ Not started |
+| **M0** Protocol frozen | Wire protocol + sysvar layout signed off | ✅ Done — protocol frozen at proto=1, sysvar layout frozen (reviewer-approved) |
 | **M1** Software loopback | Terminal ⇄ Mock ECU over plain TCP, all 4 capabilities | ⬜ Not started |
 | **M2** Option A live | Terminal ⇄ CAPL TCP ⇄ Vector ⇄ (virtual + VN1610) | ⬜ Not started |
 | **M3** Option B live | Terminal ⇄ bridge ⇄ COM/sysvar ⇄ Vector | ⬜ Not started |
@@ -68,6 +68,7 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-12 | `____` | M0: froze wire protocol (proto=1) + Diag sysvar layout in docs/03-TECHNICAL-DETAIL.md; added Diag::RspKind sysvar; moved 00/01/02/03/05/STATUS/RUNBOOK into docs/ | — | n.a. |
 | `____-__-__` | `____` | _(initial scaffold)_ | — | — |
 
 > Topology = software loopback / virtual CAN / VN1610+real ECU. Tool = CANoe / CANalyzer / n.a.
@@ -88,7 +89,7 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 ## 6. Next actions
 
-- [ ] Freeze wire protocol + sysvar layout → **M0**.
+- [x] Freeze wire protocol + sysvar layout → **M0**.
 - [ ] Build Mock ECU + terminal on software loopback → **M1**.
 - [ ] Verify CAPL TCP/IP API on the target CANalyzer build (resolves R1).
 - [ ] Stand up Vector config per `docs/05` → **M2**.

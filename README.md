@@ -17,12 +17,12 @@ Python TUI ┘   (A: TCP / B: WS+COM)   └ flexdiag_sysvar  ┘                
 
 | # | Document | What it covers |
 |---|----------|----------------|
-| 0 | [00-MASTER-PLAN.md](00-MASTER-PLAN.md) | Scope, goals, phasing, milestones, risks, repo layout |
-| 1 | [01-SYSTEM-ARCHITECTURE.md](01-SYSTEM-ARCHITECTURE.md) | Components, data flow, both transports, key ADRs |
-| 2 | [02-SYSTEM-REQUIREMENTS.md](02-SYSTEM-REQUIREMENTS.md) | Functional + non-functional + environment requirements |
-| 3 | [03-TECHNICAL-DETAIL.md](03-TECHNICAL-DETAIL.md) | Wire protocol, sysvar layout, CAPL, bridge, mock ECU, codecs |
-| 4 | [04-RULES-AND-CONVENTIONS.md](04-RULES-AND-CONVENTIONS.md) | Protocol/CAPL/Python/Dart/git/testing rules |
-| 5 | [05-CANOE-CANALYZER-SETUP.md](05-CANOE-CANALYZER-SETUP.md) | Step-by-step Vector setup + bring-up checklist |
+| 0 | [00-MASTER-PLAN.md](docs/00-MASTER-PLAN.md) | Scope, goals, phasing, milestones, risks, repo layout |
+| 1 | [01-SYSTEM-ARCHITECTURE.md](docs/01-SYSTEM-ARCHITECTURE.md) | Components, data flow, both transports, key ADRs |
+| 2 | [02-SYSTEM-REQUIREMENTS.md](docs/02-SYSTEM-REQUIREMENTS.md) | Functional + non-functional + environment requirements |
+| 3 | [03-TECHNICAL-DETAIL.md](docs/03-TECHNICAL-DETAIL.md) | Wire protocol, sysvar layout, CAPL, bridge, mock ECU, codecs |
+| 4 | [04-RULES-AND-CONVENTIONS.md](docs/04-RULES-AND-CONVENTIONS.md) | Protocol/CAPL/Python/Dart/git/testing rules |
+| 5 | [05-CANOE-CANALYZER-SETUP.md](docs/05-CANOE-CANALYZER-SETUP.md) | Step-by-step Vector setup + bring-up checklist |
 
 ## Quick start (suggested path)
 
