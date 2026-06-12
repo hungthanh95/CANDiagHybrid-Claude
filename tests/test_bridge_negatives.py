@@ -1,11 +1,9 @@
-"""Negative-path parity tests for Option B (:mod:`bridge.flexdiag_bridge`).
+"""Negative-path tests for Option B (:mod:`bridge.flexdiag_bridge`).
 
-Mirrors ``tests/test_server_negatives.py`` (Option A / :class:`mock_ecu.server.MockServer`)
-but drives :class:`bridge.flexdiag_bridge.BridgeServer` (WebSocket +
+Drives :class:`bridge.flexdiag_bridge.BridgeServer` (WebSocket +
 :class:`bridge.flexdiag_bridge.FakeVectorCom`) via
-:class:`terminal.transport_ws.WsTransport`, proving FR-12 ("identical
-protocol both transports") for the required negative paths (CLAUDE.md
-"What you test" / docs/04):
+:class:`terminal.transport_ws.WsTransport`, covering the required negative
+paths (CLAUDE.md "What you test" / docs/04):
 
 - ``0x78`` response-pending -> intermediate ``NRC <sid> 78`` then the final
   terminal response, both carrying the same seq.

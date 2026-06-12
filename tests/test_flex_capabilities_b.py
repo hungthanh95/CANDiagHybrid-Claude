@@ -2,11 +2,9 @@
 v1 capability, run against :class:`bridge.flexdiag_bridge.BridgeServer`
 (WebSocket bridge + :class:`bridge.flexdiag_bridge.FakeVectorCom`).
 
-Mirrors ``tests/test_flex_capabilities.py`` (Option A / :class:`mock_ecu.server.MockServer`)
-exactly, but uses ``connectb`` and ``${PORT}`` substitution against
-``BridgeServer.bound_port``. Together with the Option A tests, this proves
-FR-12 ("identical protocol both transports") and completes the capability x
-transport matrix (FR-11 "Option B transport") for:
+Each script uses ``connectb`` and ``${PORT}`` substitution against
+``BridgeServer.bound_port``. This completes the capability matrix (FR-11
+"Option B transport") for:
 
 - ``cap_readdtc_b.flex``        -> Read DTC
 - ``cap_tester_present_b.flex`` -> Tester Present
