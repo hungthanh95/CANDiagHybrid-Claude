@@ -619,17 +619,31 @@ NRC: 0x10 generalReject, 0x11 serviceNotSupported, 0x22 conditionsNotCorrect,
 flutter_app/lib/
 ├── transport/
 │   ├── transport.dart          # interface: connect/send/stream/dispose
-│   └── ws_transport.dart       # Option B (web_socket_channel)
+│   └── ws_transport.dart       # Option B (web_socket_channel, dart:io)
 ├── protocol/
-│   ├── codec.dart              # encode commands / parse responses
-│   └── seq.dart                # correlation id allocator
-├── codec/dtc.dart              # DTC decode
-├── services/diag_service.dart  # high-level ops: readDtc(), security(), tp()
-├── state/                      # app state (transport, log, dtc list)
-└── ui/                         # screens + log view
+│   ├── codec.dart               # encode commands / parse responses, proto=1
+│   └── seq.dart                 # correlation id allocator
+├── codec/
+│   ├── dtc.dart                  # DTC decode (§6.1)
+│   └── nrc.dart                  # NRC name table, display only (§6.2)
+├── services/diag_service.dart  # high-level ops: readDtc(), securityUnlock(), tp(), raw(), session(), clearDtc(), ping()
+├── state/                      # app state (transport, log, dtc list) -- not yet built
+└── ui/                         # screens + log view -- not yet built
 ```
 
-`DiagService` exposes `Future<List<Dtc>> readDtc()`, `Future<bool> securityUnlock(int level)`, `void testerPresent(bool on)`, `Future<List<int>> raw(List<int> bytes)`. Screens depend on `DiagService`, never on the concrete `WsTransport`, per `docs/04` §4 rule 1.
+As of the M5 foundation slice, `flutter_app` is a pure-Dart package (`environment: { sdk: ... }`, no `flutter:` dependency yet) so `dart test` covers `codec/`, `protocol/`, `transport/`, and `services/` without the Flutter SDK. `lib/state/` and `lib/ui/` (and `main.dart`) land in a follow-up task that may add the `flutter` SDK constraint.
+
+`DiagService` (constructed from a `Transport`, started via `.start()`) exposes:
+
+- `Future<ReadDtcResult> readDtc({int mask = 0xFF})` -- decoded DTC list (`codec/dtc.dart`).
+- `Future<List<int>> clearDtc()` -- raw positive response bytes.
+- `Future<List<int>> session(int sessionId)` -- raw positive response bytes (`RSP`, never `OK`).
+- `Future<int> securityUnlock(int level)` -- resolves to the unlocked odd level on `OK SEC <level>`.
+- `Future<void> testerPresent(bool enable)` -- `TP START`/`TP STOP`, resolves on `OK TP`.
+- `Future<List<int>> raw(List<int> data)` -- arbitrary UDS request, raw positive response bytes.
+- `Future<void> ping()` -- resolves on `PONG`.
+
+All of the above throw `NrcException` (ECU negative response, `NRC <sid> <nrc>` -- distinct from `ErrException` per the "NRC ≠ ERR" rule), `ErrException` (protocol/tool error, `ERR <code> <text>`; codes per §1.5's closed set), or `TransportException` (connection drop/timeout) on failure. Screens depend on `DiagService` and the `Transport` interface, never on the concrete `WsTransport`, per `docs/04` §4 rule 1.
 
 ---
 

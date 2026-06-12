@@ -1,0 +1,8 @@
+# Dart/Flutter build artifacts -- not committed.
+.dart_tool/
+.packages
+build/
+
+# Package (not application): pubspec.lock is not committed for a library
+# package per Dart conventions (https://dart.dev/guides/libraries/private-files).
+pubspec.lock
