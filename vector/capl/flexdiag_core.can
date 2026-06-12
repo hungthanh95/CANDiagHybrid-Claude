@@ -32,8 +32,13 @@ variables
 
 /* ---- Transport hook: each transport node defines this ----
  *   void PublishRsp(dword seq, int status, byte data[], dword len, int kind);
- *     status: 0 positive, 1 negative(NRC), 2 ok(non-UDS), 3 error
+ *     status: 0=positive, 1=negative(NRC), 2=ok(non-UDS),
+ *             3=ERR(keygen, -> "ERR 500 keygen_fail"),
+ *             4=ERR(timeout, -> "ERR 504 ecu_timeout")
  *     kind:   echoes ReqKind (0-6) of the operation this response belongs to
+ *
+ *   status 3/4 are tool-side ERR conditions, not ECU NRCs (docs/04 §1.5:
+ *   NRC != ERR). docs/03 §1.5 closed ERR set: 500/502/503/504.
  */
 
 on start
@@ -167,11 +172,19 @@ on diagResponse ECU1.*
 
   if (diagIsNegativeResponse(this))
   {
+    // 0x78 pending is non-terminal -- keep state, wait for final response
+    // (docs/03 §1.4, §1.5).
+    if (len >= 3 && gRsp[2] == 0x78)
+    {
+      PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> 78 (intermediate)
+      return;
+    }
+
     if (gSecActive && gReqSeq == gSecSeq)
     {
       gSecActive = 0;
     }
-    PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> <nrc>
+    PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> <nrc> (terminal)
     return;
   }
 
@@ -217,7 +230,7 @@ on diagOnTimeout ECU1.*
   timeoutRsp[1] = 0x00;
   timeoutRsp[2] = 0x00;
   write("TIMEOUT seq=%d", gReqSeq);
-  PublishRsp(gReqSeq, 1, timeoutRsp, 3, gReqKind);
+  PublishRsp(gReqSeq, 4, timeoutRsp, 3, gReqKind);  // tool-side ERR 504 ecu_timeout
 }
 
 /* Hex-format helper for Write-window logging (docs/04 §3.7). */

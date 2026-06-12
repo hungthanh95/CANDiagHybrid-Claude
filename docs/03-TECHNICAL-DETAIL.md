@@ -151,6 +151,17 @@ variables
 //     kind:   echoes the ReqKind (0-6) of the operation this response belongs to
 // They are declared here as 'export' contracts; transport nodes implement.
 
+/* Internal status enum used by flexdiag_core.can when calling PublishRsp()
+ * (implementation detail, not a wire-protocol change -- proto=1 unchanged;
+ * the ERR 500/502/503/504 codes were already part of the closed §1.5 table):
+ *   0 = positive UDS response
+ *   1 = negative response (NRC, including 7F <sid> 78 "pending" -- which is
+ *       non-terminal: the core re-arms and waits for the final response)
+ *   2 = OK (non-UDS, e.g. OK TP / OK SEC)
+ *   3 = ERR keygen_fail   -> wire "ERR 500 keygen_fail"
+ *   4 = ERR ecu_timeout   -> wire "ERR 504 ecu_timeout" (from on diagOnTimeout)
+ */
+
 on start
 {
   diagSetTarget("ECU1");   // REQUIRED, especially on CANalyzer
@@ -323,6 +334,18 @@ void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
   }
 }
 ```
+
+> **Note on the sketch above vs. the implementation.** This sketch shows
+> `PublishRsp` deriving `OK SEC <level>` from a `gSecLevel` global tracked by
+> the TCP node itself. The actual `flexdiag_tcp.can` does not track security
+> state locally: `flexdiag_core.can` owns `gSecActive`/`gSecSeq`/`gSecLevel`
+> and, on the final `67 <evenLevel>` response (kind==3, status==2), passes
+> those response bytes to `PublishRsp`. The TCP node derives the odd level
+> directly from the data it receives -- `oddLevel = data[1] - 1` (evenLevel -
+> 1) -- and emits `OK SEC <oddLevel>`. Cross-`.can`-file globals are
+> version-sensitive (docs/04 §2.2), which is why all security state lives in
+> `flexdiag_core.can` rather than being duplicated in each transport node.
+> The wire output `OK SEC <level>` is unchanged.
 
 ### 3.3 `flexdiag_sysvar.can` — Option B transport
 

@@ -416,5 +416,9 @@ void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
     case 3:                                   // error (e.g. keygen_fail)
       TcpSendF((long)seq, "ERR 500 keygen_fail");
       break;
+
+    case 4:                                   // tool-side: ECU did not respond in time
+      TcpSendF((long)seq, "ERR 504 ecu_timeout");
+      break;
   }
 }
