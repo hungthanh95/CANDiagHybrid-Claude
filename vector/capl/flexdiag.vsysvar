@@ -1,91 +1,15 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
-  FlexDiag System Variables export -- namespace "Diag" (Option B / docs/03 §2).
-
-  ASSUMPTIONS / VALIDATION NOTE
-  ==============================
-  This file targets the CANoe/CANalyzer "System Variables" XML export/import
-  format (File > ... > Import on the System Variables window, or
-  Environment > System Variables > Namespace > Import). The exact element
-  names and attributes for this format are versioned by Vector and are not
-  fully published; this file is a best-effort reconstruction based on the
-  commonly-documented <SystemVariables>/<Namespace>/<Variable> structure used
-  by CANoe/CANalyzer system-variable exports (.vsysvar).
-
-  If "File > Import" rejects this file on your installed version:
-    1. Use it as a reference only and create the namespace/variables manually
-       per docs/05-CANOE-CANALYZER-SETUP.md §4.2 (the table there is the
-       normative fallback and matches docs/03-TECHNICAL-DETAIL.md §2 exactly).
-    2. Alternatively, create one variable manually, export the namespace from
-       your tool to see its native .vsysvar shape, and adjust this file's
-       element/attribute names to match before re-importing.
-
-  Types used below:
-    - "Data"    -> variable-length byte array (CANoe "Data" sysvar type),
-                   used for ReqData/RspData (size >= 4095 bytes, docs/03 §3.1
-                   kMaxLen). Initial value is empty.
-    - "Integer" -> scalar integer sysvar, used for all *Seq/*Kind/*Arg/
-                   *Trigger/*Status variables. Initial value 0.
-
-  Do not edit Diag::* names/types/enums without flexdiag-reviewer approval
-  (docs/03 §2 is protocol-frozen).
--->
-<SystemVariables version="1.0">
-  <Namespace name="Diag" comment="FlexDiag Option B request/response sysvars (docs/03 TECHNICAL-DETAIL.md sec 2)">
-
-    <!-- Request side: written by the bridge, read by flexdiag_sysvar.can -->
-    <Variable name="ReqData" type="Data">
-      <Comment>Raw request bytes (full UDS frame). Byte array, size >= 4095 (kMaxLen).</Comment>
-      <Size>4095</Size>
-      <InitialValue/>
-    </Variable>
-
-    <Variable name="ReqSeq" type="Integer">
-      <Comment>Correlation id; written before ReqTrigger.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="ReqKind" type="Integer">
-      <Comment>0=RAW, 1=READDTC, 2=CLEARDTC, 3=SECURITY, 4=SESSION, 5=TP_START, 6=TP_STOP.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="ReqArg" type="Integer">
-      <Comment>Generic arg (e.g. security level, session id, mask).</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="ReqTrigger" type="Integer">
-      <Comment>Incremented by the bridge to fire the request; CAPL reacts on change.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <!-- Response side: written by flexdiag_sysvar.can, read by the bridge -->
-    <Variable name="RspData" type="Data">
-      <Comment>Raw response bytes (positive or 7F..). Byte array, size >= 4095 (kMaxLen).</Comment>
-      <Size>4095</Size>
-      <InitialValue/>
-    </Variable>
-
-    <Variable name="RspSeq" type="Integer">
-      <Comment>Echoed correlation id (mirrors ReqSeq).</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="RspStatus" type="Integer">
-      <Comment>0=positive UDS response, 1=negative response/NRC, 2=OK (non-UDS), 3=ERR keygen_fail, 4=ERR ecu_timeout. See docs/03 sec 2 for full semantics.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="RspKind" type="Integer">
-      <Comment>Echoes ReqKind (same 0-6 enum) for the operation this response belongs to.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-    <Variable name="RspTrigger" type="Integer">
-      <Comment>Incremented by CAPL when a response is ready; the bridge reacts on change.</Comment>
-      <InitialValue>0</InitialValue>
-    </Variable>
-
-  </Namespace>
-</SystemVariables>
+<?xml version="1.0" encoding="utf-8"?>
+<systemvariables version="4">
+  <namespace name="Diag" comment="FlexDiag Option B request/response sysvars (docs/03 TECHNICAL-DETAIL.md sec 2)" interface="">
+    <variable name="ReqData" type="data" arrayLength="4095" comment="Raw request bytes (full UDS frame). Byte array, size >= 4095 (kMaxLen)." readOnly="false" valueSequence="false" unit="" bitcount="0" isSigned="false" encoding="65001" anlyzLocal="2" />
+    <variable name="ReqSeq" type="int" comment="Correlation id; written before ReqTrigger." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="ReqKind" type="int" comment="0=RAW, 1=READDTC, 2=CLEARDTC, 3=SECURITY, 4=SESSION, 5=TP_START, 6=TP_STOP." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="ReqArg" type="int" comment="Generic arg (e.g. security level, session id, mask)." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="ReqTrigger" type="int" comment="Incremented by the bridge to fire the request; CAPL reacts on change." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="RspData" type="data" arrayLength="4095" comment="Raw response bytes (positive or 7F..). Byte array, size >= 4095 (kMaxLen)." readOnly="false" valueSequence="false" unit="" bitcount="0" isSigned="false" encoding="65001" anlyzLocal="2" />
+    <variable name="RspSeq" type="int" comment="Echoed correlation id (mirrors ReqSeq)." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="RspStatus" type="int" comment="0=positive UDS response, 1=negative response/NRC, 2=OK (non-UDS), 3=ERR keygen_fail, 4=ERR ecu_timeout." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="RspKind" type="int" comment="Echoes ReqKind (same 0-6 enum) for the operation this response belongs to." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+    <variable name="RspTrigger" type="int" comment="Incremented by CAPL when a response is ready; the bridge reacts on change." readOnly="false" valueSequence="false" unit="" bitcount="32" isSigned="true" encoding="65001" startValue="0" anlyzLocal="2" />
+  </namespace>
+</systemvariables>

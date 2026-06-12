@@ -38,13 +38,13 @@ Work through this once, before starting the §8 bring-up checklist, on the
 machine that will run CANoe/CANalyzer. Each item references the open risk
 (`docs/STATUS.md` §5) it closes.
 
-- [ ] **Python environment ready:** from the repo root, `pip install -e .[dev]`
+- [x] **Python environment ready:** from the repo root, `pip install -e .[dev]`
       gets `websockets`, `pytest`, `ruff`, `black`, etc. for the terminal,
       Mock ECU, and protocol/codec tests.
-- [ ] **Option B COM dependency:** for the real `VectorCom` backend (not
+- [x] **Option B COM dependency:** for the real `VectorCom` backend (not
       `--fake`), also `pip install -e .[vector]` (installs `pywin32` on
       Windows). Not needed for mock-first testing (`bridge --fake`).
-- [ ] **Tool version confirmed:** CANoe/CANalyzer version installed is the
+- [x] **Tool version confirmed:** CANoe/CANalyzer version installed is the
       reference version at the top of this doc (`CANalyzer 16/17`) or newer.
       If different, expect to re-verify CAPL syntax (R4) — see §10
       troubleshooting.
@@ -56,7 +56,7 @@ machine that will run CANoe/CANalyzer. Each item references the open risk
       matches the algorithm implemented by the attached test seed-key DLL. If
       they differ, `27 02` will fail with `7F 27 35` (invalidKey) against the
       Mock ECU even though the DLL itself is fine.
-- [ ] **COM automation permitted** (Option B only): confirm
+- [x] **COM automation permitted** (Option B only): confirm
       `Dispatch("CANoe.Application")` / `Dispatch("CANalyzer.Application")` is
       not blocked by Windows/group policy on this machine — required for
       `bridge/` (R2). Quick check: with the tool running and a config loaded,
