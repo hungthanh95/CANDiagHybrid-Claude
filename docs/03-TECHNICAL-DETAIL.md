@@ -167,7 +167,9 @@ variables
  *       non-terminal: the core re-arms and waits for the final response)
  *   2 = OK (non-UDS, e.g. OK TP / OK SEC)
  *   3 = ERR keygen_fail   -> wire "ERR 500 keygen_fail"
- *   4 = ERR ecu_timeout   -> wire "ERR 504 ecu_timeout" (from on diagOnTimeout)
+ *   4 = ERR ecu_timeout   -> wire "ERR 504 ecu_timeout" (from on timer
+ *       gReqTimeout -- a portable msTimer watchdog, not a diagnostic-
+ *       specific timeout event; see flexdiag_core.can)
  */
 
 on start
