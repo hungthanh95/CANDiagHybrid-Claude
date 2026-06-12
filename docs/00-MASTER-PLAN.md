@@ -111,6 +111,8 @@ Error handling, reconnection, NRC surfacing, timeouts, logging, and finalising t
 | M5 Flutter parity | Flutter does all 4 capabilities on both transports |
 | M6 Release v1 | Hardened, documented, reproducible setup |
 
+> **Sequencing note (2026-06-12):** M3 (Option B) is prioritized ahead of finishing M2's Vector bring-up. M2's CAPL code (`flexdiag_core.can`, `flexdiag_tcp.can`) is written and reviewer-approved, but Vector-side verification depends on CAPL TCP/IP API license availability and is parked until that's resolved. M5 (Flutter parity) is deferred indefinitely — the Python terminal is the v1 test client.
+
 ---
 
 ## 7. Key risks and mitigations

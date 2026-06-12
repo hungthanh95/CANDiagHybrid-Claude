@@ -14,6 +14,14 @@ Components: `vector/capl/` (CAPL nodes), `bridge/` (Option B Python bridge), `mo
 
 ---
 
+## 1a. Current sequencing priority (operator override, 2026-06-12)
+
+- **Option B first.** Option A (CAPL TCP) Vector bring-up depends on an uncertain CAPL TCP/IP API license. The Option A CAPL code (`flexdiag_core.can`, `flexdiag_tcp.can`) is written and `flexdiag-reviewer`-approved (M2) but its Vector-side verification is parked. Prioritize **Option B** (`flexdiag_sysvar.can` + `bridge/`, M3) next — both transports still ship eventually, this only reorders the work.
+- **Flutter deferred.** `flutter_app/` (W5/M5) is paused. The Python terminal (`terminal/`) is the primary test client for all capabilities until Flutter is picked back up.
+- **PRs optional.** See §2/§3 — default workflow is commit + push to the feature branch; the operator reviews and merges to `main` directly. `flexdiag-shipper` is invoked only on explicit request.
+
+---
+
 ## 2. Roles and model assignment
 
 Work is split so the strongest model handles low-volume / high-stakes decisions and cheaper models handle high-volume repetitive work. Each role is implemented as a subagent in `.claude/agents/`.
@@ -24,7 +32,7 @@ Work is split so the strongest model handles low-volume / high-stakes decisions 
 | **Developer** | `flexdiag-developer` | Sonnet 4.6 | Implements bridge, Mock ECU, terminal, Flutter UI, and CAPL transport nodes against the frozen protocol. |
 | **Tester** | `flexdiag-tester` | Sonnet 4.6 (writes tests) / Haiku 4.5 (runs regressions) | Writes unit tests (codecs), negative-path tests (NRC `0x78`/`0x35`/`0x33`), and runs `.flex` regression scripts against the Mock ECU. |
 | **Status / PM** | `flexdiag-status` | Haiku 4.5 | Keeps `docs/STATUS.md` current: milestone state (M0–M6), capability × transport × tool pass matrix, and FR→test traceability. |
-| **PR shipper** | `flexdiag-shipper` | Sonnet 4.6 | Owns the PR lifecycle: opens PRs from feature branches to `main`, reviews them against `docs/04` §7 (git rules), and merges once CI is green and approvals are in. Routes protected-area PRs to `flexdiag-reviewer` for approval; does **not** self-approve them. |
+| **PR shipper** | `flexdiag-shipper` | Sonnet 4.6 | **On-demand only** (see §1a). Owns the PR lifecycle when invoked: opens PRs from feature branches to `main`, reviews them against `docs/04` §7 (git rules), and merges once CI is green and approvals are in. Routes protected-area PRs to `flexdiag-reviewer` for approval; does **not** self-approve them. |
 
 > If a model alias isn't available in your Claude Code build, map it via the model-config environment variables (see Claude Code docs). For larger architectural decisions you may run the reviewer on a higher tier (e.g. Fable 5) — but everyday reviews use Opus.
 
@@ -45,6 +53,7 @@ These restate `docs/04` for agent execution. **Violations block a merge.**
 6. **Both transports, every capability.** A capability is "done" only when it passes on Option A *and* Option B. Release requires passing on CANoe *and* CANalyzer.
 7. **Secrets never committed.** Real seed-key DLLs, ECU keys, and customer CAN matrices stay out of the repo. Only the *test* DLL/algorithm and Mock ECU live in-repo. Generated keys are never written to persistent logs.
 8. **Every PR records its test topology** (software loopback / virtual CAN / VN1610+real ECU) and tool (CANoe/CANalyzer). `flexdiag-status` reflects this in `docs/STATUS.md`.
+9. **PR is optional, reviewer approval is not.** By default, work is committed and pushed to the feature branch; the operator reviews and merges to `main` directly (no `flexdiag-shipper`). Protected-area changes (rule 3) still require a recorded `flexdiag-reviewer` APPROVE — when no PR exists, that verdict lives in the session transcript/commit message instead of a PR comment, and the operator carries it forward when merging.
 
 ---
 

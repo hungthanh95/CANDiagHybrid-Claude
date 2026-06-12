@@ -12,10 +12,10 @@
 |-----------|--------------------|--------|
 | **M0** Protocol frozen | Wire protocol + sysvar layout signed off | ✅ Done — protocol frozen at proto=1, sysvar layout frozen (reviewer-approved) |
 | **M1** Software loopback | Terminal ⇄ Mock ECU over plain TCP, all 5 capabilities | ✅ Done — Mock ECU + terminal on software TCP loopback; 87 tests; all 5 capabilities verified; ruff + black clean |
-| **M2** Option A live | Terminal ⇄ CAPL TCP ⇄ Vector ⇄ (virtual + VN1610) | ⬜ Not started |
-| **M3** Option B live | Terminal ⇄ bridge ⇄ COM/sysvar ⇄ Vector | ⬜ Not started |
+| **M2** Option A live | Terminal ⇄ CAPL TCP ⇄ Vector ⇄ (virtual + VN1610) | 🟡 In progress — `flexdiag_core.can` + `flexdiag_tcp.can` code-complete (reviewer-approved via commit `9dce487`), CANalyzer compile ✅, full bring-up checklist (docs/05 §8) ⬜ pending |
+| **M3** Option B live | Terminal ⇄ bridge ⇄ COM/sysvar ⇄ Vector | 🟡 In progress — now prioritized over M2 Vector bring-up |
 | **M4** Transport switch | Runtime A/B switch in terminal and Flutter | ⬜ Not started |
-| **M5** Flutter parity | Flutter does all 4 capabilities on both transports | ⬜ Not started |
+| **M5** Flutter parity | Flutter does all 4 capabilities on both transports | ⬜ **Deferred** — Python terminal is v1 test client; see CLAUDE.md §1a |
 | **M6** Release v1 | Hardened, documented, reproducible setup | ⬜ Not started |
 
 ---
@@ -68,6 +68,8 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-12 | `9dce487` | fix(capl): handle `0x78` pending non-terminally; map ECU timeout to ERR 504; M2 reviewer re-review APPROVE | n.a. | n.a. |
+| 2026-06-12 | `7d2cea9` | feat(capl): add `flexdiag_core.can` + `flexdiag_tcp.can` for Option A (M2); docs/03 §3.1/§3.2 updates; M2 reviewer first-pass REQUEST CHANGES | n.a. | n.a. |
 | 2026-06-12 | `10b04e1` | M1: Mock ECU + terminal + protocol codec on software TCP loopback; 87 tests (codec, mock UDS, server negatives, .flex regression per capability); ruff+black clean | software loopback | n.a. |
 | 2026-06-12 | `____` | M0: froze wire protocol (proto=1) + Diag sysvar layout in docs/03-TECHNICAL-DETAIL.md; added Diag::RspKind sysvar; moved 00/01/02/03/05/STATUS/RUNBOOK into docs/ | — | n.a. |
 | `____-__-__` | `____` | _(initial scaffold)_ | — | — |
@@ -80,11 +82,12 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 | # | Risk / blocker | Owner | Status |
 |---|----------------|-------|--------|
-| R1 | CAPL **TCP/IP API** availability on the target CANalyzer build unverified (blocks Option A on that seat) | — | Open — verify early in M2 |
-| R2 | Seed-key **DLL bitness** must match the Vector process | — | Open |
-| R3 | Raw-request / sysvar **CAPL syntax** may differ across tool versions | — | Open — pin reference version |
-| R4 | **VN1610 channel** assignment for tool + passive coexistence | — | Open |
-| R5 | Mock ECU **key algorithm** drift vs test DLL silently breaks `0x27` test | — | Open |
+| R1 | CAPL **TCP/IP API** licensing on operator's CANalyzer (parked; Option A Vector bring-up depends on this) | — | **Parked** — M2 code approved; CANalyzer compile OK; full bring-up held until API license confirmed |
+| R2 | **M3 sequencing:** Option B now prioritized over finishing M2 Vector bring-up | — | Active — Python terminal is v1 test client; Option B (sysvar/bridge) is next |
+| R3 | Seed-key **DLL bitness** must match the Vector process | — | Open |
+| R4 | Raw-request / sysvar **CAPL syntax** may differ across tool versions | — | Open — pin reference version |
+| R5 | **VN1610 channel** assignment for tool + passive coexistence | — | Open |
+| R6 | Mock ECU **key algorithm** drift vs test DLL silently breaks `0x27` test | — | Open |
 
 ---
 
@@ -92,5 +95,7 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 - [x] Freeze wire protocol + sysvar layout → **M0**.
 - [x] Build Mock ECU + terminal on software loopback → **M1**.
-- [ ] Verify CAPL TCP/IP API on the target CANalyzer build (resolves R1).
-- [ ] Stand up Vector config per `docs/05` → **M2**.
+- [x] Write + reviewer-approve `flexdiag_core.can` + `flexdiag_tcp.can` → **M2 code**.
+- [ ] **Prioritize M3:** write `flexdiag_sysvar.can` + Python `bridge/` (Option B) before full M2 Vector bring-up.
+- [ ] Confirm CAPL TCP/IP API license for CANalyzer (resolves R1; gates full M2 bring-up).
+- [ ] Run M2 Vector bring-up checklist (docs/05 §8) once API confirmed.
