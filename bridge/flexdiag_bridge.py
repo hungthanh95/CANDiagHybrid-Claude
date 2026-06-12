@@ -375,11 +375,32 @@ async def handle(websocket: object, vec: VectorCom | FakeVectorCom) -> None:
         pump_task.cancel()
 
 
+def _get_event_nowait_or_timeout(
+    vec: VectorCom | FakeVectorCom, timeout: float
+) -> tuple[int, int, int, bytes] | None:
+    """``vec.evt_q.get(timeout=timeout)``, returning ``None`` on timeout.
+
+    Used by :func:`_pump_events` so the executor thread periodically returns
+    control to the event loop instead of blocking forever on
+    ``queue.Queue.get()`` -- an uncancellable blocking call would otherwise
+    leak a non-daemon ``ThreadPoolExecutor`` worker thread for the lifetime
+    of the process every time a connection closes (``pump_task.cancel()``
+    cannot interrupt a blocking ``get()``).
+    """
+    try:
+        return vec.evt_q.get(timeout=timeout)
+    except queue.Empty:
+        return None
+
+
 async def _pump_events(
     websocket: object, vec: VectorCom | FakeVectorCom, loop: asyncio.AbstractEventLoop
 ) -> None:
     while True:
-        seq, status, kind, data = await loop.run_in_executor(None, vec.evt_q.get)
+        item = await loop.run_in_executor(None, _get_event_nowait_or_timeout, vec, 0.2)
+        if item is None:
+            continue  # timed out -- give asyncio a chance to observe cancellation
+        seq, status, kind, data = item
         try:
             await websocket.send(encode_response(seq, status, kind, data))  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 - connection closed etc.
@@ -515,3 +536,103 @@ async def serve(host: str, port: int, vec: VectorCom | FakeVectorCom) -> None:
     async with websockets.serve(lambda ws: handle(ws, vec), host, port, max_size=MAX_LINE + 64):
         logger.info("FlexDiag bridge listening on ws://%s:%d/ (tool=%s)", host, port, vec.tool)
         await asyncio.Future()  # run forever
+
+
+class BridgeServer:
+    """Synchronous test harness around :func:`serve` + :class:`FakeVectorCom`.
+
+    Mirrors :class:`mock_ecu.server.MockServer`'s ``start()``/``stop()``/
+    ``bound_port``/``.ecu`` surface so Option-B tests can be written the same
+    way as Option-A tests against ``MockServer`` (mock-first, CLAUDE.md rule
+    1). Runs the bridge's asyncio WebSocket server on a dedicated background
+    thread; ``port=0`` binds an ephemeral port, exposed via
+    :attr:`bound_port` once :meth:`start` returns.
+
+    Args:
+        host: Bind address (default ``127.0.0.1``).
+        port: Bind port (``0`` for an OS-assigned ephemeral port).
+        vec: The ``*Com`` backend (defaults to a fresh :class:`FakeVectorCom`).
+    """
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        vec: FakeVectorCom | None = None,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.vec = vec if vec is not None else FakeVectorCom()
+
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._server: object | None = None
+        self._thread: threading.Thread | None = None
+        self._ready_evt = threading.Event()
+        self._bound_port: int | None = None
+
+    @property
+    def ecu(self) -> Ecu:
+        """The :class:`mock_ecu.uds.Ecu` backing :attr:`vec` (for ``inject_next``)."""
+        return self.vec.ecu
+
+    @property
+    def bound_port(self) -> int:
+        """The actual bound WebSocket port (useful when ``port=0`` was requested)."""
+        if self._bound_port is None:
+            raise RuntimeError("server not started")
+        return self._bound_port
+
+    def start(self) -> None:
+        """Start :attr:`vec` and the WebSocket server on a background thread."""
+        if self._thread is not None:
+            raise RuntimeError("server already started")
+        self.vec.start()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready_evt.wait()
+
+    def stop(self) -> None:
+        """Stop the server, join its thread, and stop :attr:`vec`. Idempotent."""
+        if self._loop is not None and self._thread is not None:
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+            self._thread.join(timeout=5)
+            self._thread = None
+            self._loop = None
+        self.vec.stop()
+
+    def _run(self) -> None:
+        import websockets
+
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        asyncio.set_event_loop(loop)
+
+        async def _start() -> None:
+            self._server = await websockets.serve(
+                lambda ws: handle(ws, self.vec),
+                self.host,
+                self.port,
+                max_size=MAX_LINE + 64,
+                # Short close_timeout: test clients may disconnect abruptly
+                # (their own event loop torn down between pytest fixtures)
+                # rather than completing a clean close handshake. Without
+                # this, wait_closed() in _shutdown() can block for the
+                # default 10s per connection, making stop()'s
+                # thread.join(timeout=5) time out on every test.
+                close_timeout=0.1,
+            )
+            self._bound_port = self._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+
+        loop.run_until_complete(_start())
+        self._ready_evt.set()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
+    async def _shutdown(self) -> None:
+        if self._server is not None:
+            self._server.close()  # type: ignore[attr-defined]
+            await self._server.wait_closed()  # type: ignore[attr-defined]
+        loop = asyncio.get_event_loop()
+        loop.stop()
