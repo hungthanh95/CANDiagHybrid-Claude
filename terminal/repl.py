@@ -2,7 +2,9 @@
 
 Commands map 1:1 to protocol verbs plus conveniences (``docs/03`` §8):
 
-- ``connect [host] [port]`` -- default ``127.0.0.1 9000``.
+- ``connect [host] [port]`` -- Option A (TCP), default ``127.0.0.1 9000``.
+- ``connectb [host] [port]`` -- Option B (WebSocket bridge), default
+  ``127.0.0.1 8770``.
 - ``readdtc [mask_hex]``
 - ``cleardtc``
 - ``session <hex>``
@@ -39,6 +41,7 @@ from protocol.wire import (
     parse_response,
 )
 from terminal.transport_tcp import TcpTransport, TransportError
+from terminal.transport_ws import WsTransport
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,7 @@ class Repl:
     """Holds connection/session state for the interactive terminal."""
 
     def __init__(self) -> None:
-        self.transport: TcpTransport | None = None
+        self.transport: TcpTransport | WsTransport | None = None
         self.seq_alloc = SeqAllocator()
         self.trace = False
         self._reader_task: asyncio.Task[None] | None = None
@@ -65,6 +68,15 @@ class Repl:
         self.transport = transport
         self._reader_task = asyncio.create_task(self._read_loop())
         print(f"connected to {host}:{port}")
+
+    async def connectb(self, host: str = "127.0.0.1", port: int = 8770) -> None:
+        if self.transport is not None:
+            await self.disconnect()
+        transport = WsTransport(host, port)
+        await transport.connect()
+        self.transport = transport
+        self._reader_task = asyncio.create_task(self._read_loop())
+        print(f"connected (Option B) to {host}:{port}")
 
     async def disconnect(self) -> None:
         if self.transport is not None:
@@ -190,6 +202,12 @@ class Repl:
             host = rest[0] if len(rest) > 0 else "127.0.0.1"
             port = int(rest[1]) if len(rest) > 1 else 9000
             await self.connect(host, port)
+            return None
+
+        if cmd == "connectb":
+            host = rest[0] if len(rest) > 0 else "127.0.0.1"
+            port = int(rest[1]) if len(rest) > 1 else 8770
+            await self.connectb(host, port)
             return None
 
         if cmd == "trace":

@@ -1,0 +1,83 @@
+/* flexdiag_sysvar.can -- Option B transport: System Variable bridge.
+ * Implements docs/03-TECHNICAL-DETAIL.md §3.3 (sysvar protocol over Diag::*).
+ * NOT protected: transport-only. Calls into flexdiag_core.can's Do* helpers
+ * and implements the PublishRsp(seq,status,data,len,kind) hook (docs/04 §2.1).
+ *
+ * Driven by the Python COM bridge (bridge/flexdiag_bridge.py), which writes
+ * Diag::Req* and bumps Diag::ReqTrigger, then reacts to Diag::RspTrigger.
+ *
+ * Verify against your CANoe/CANalyzer Help: the exact sysGetVariableData/
+ * sysSetVariableData signatures and the "@Diag::Name" scalar accessor syntax
+ * can vary by tool version (docs/03 §3.3 note).
+ */
+
+variables
+{
+  const dword kMaxLen = 4095;
+}
+
+/* ---- Inbound: bridge wrote Diag::Req* and bumped Diag::ReqTrigger ---- */
+on sysvar Diag::ReqTrigger
+{
+  dword seq;
+  int   kind;
+  int   arg;
+  byte  buf[4095];
+  dword len;
+  byte  noData[1];
+
+  seq  = (dword)@Diag::ReqSeq;
+  kind = (int)@Diag::ReqKind;
+  arg  = (int)@Diag::ReqArg;
+
+  switch (kind)
+  {
+    case 0:                                  // RAW
+      len = sysGetVariableData(sysvar(Diag::ReqData), buf, elcount(buf));
+      if (len > kMaxLen) len = kMaxLen;
+      DoRaw(seq, buf, len);
+      break;
+
+    case 1:                                  // READDTC: arg = mask
+      DoReadDtcByStatusMask(seq, (byte)arg);
+      break;
+
+    case 2:                                  // CLEARDTC: no args, v1 full clear
+      DoClearDtc(seq);
+      break;
+
+    case 3:                                  // SECURITY: arg = odd level requested.
+      // DoSecurityRequestSeed() owns all security state (gSecActive/gSecSeq/
+      // gSecLevel live in flexdiag_core.can) -- this transport node must NOT
+      // duplicate that state (docs/04 §2.2, established during M2 review).
+      DoSecurityRequestSeed(seq, (byte)arg);
+      break;
+
+    case 4:                                  // SESSION: arg = session id
+      DoSessionControl(seq, (byte)arg);
+      break;
+
+    case 5:                                  // TP START
+      DoTpStart();
+      PublishRsp(seq, 2, noData, 0, 5);      // -> bridge renders "OK TP"
+      break;
+
+    case 6:                                  // TP STOP
+      DoTpStop();
+      PublishRsp(seq, 2, noData, 0, 6);      // -> bridge renders "OK TP"
+      break;
+  }
+}
+
+/* ---- Outbound: implements the core's transport hook by writing response
+ * sysvars. Generic passthrough -- no per-status special-casing. All
+ * RspStatus -> wire-line formatting (RSP/NRC/OK TP/OK SEC/ERR) happens in
+ * the Python bridge (encode_response), per docs/03 §2's RspStatus table. */
+void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
+{
+  sysSetVariableData(sysvar(Diag::RspData), data, len);
+  @Diag::RspSeq    = seq;
+  @Diag::RspStatus = status;
+  @Diag::RspKind   = kind;
+  @Diag::RspTrigger = @Diag::RspTrigger + 1;   // notify bridge (poll on change)
+}

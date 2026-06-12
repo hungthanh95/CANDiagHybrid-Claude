@@ -3,7 +3,9 @@ name = "flexdiag"
 version = "0.1.0"
 description = "FlexDiag UDS diagnostic tool - shared protocol codec, Mock ECU, and terminal client"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "websockets",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -12,9 +14,15 @@ dev = [
     "ruff",
     "black",
 ]
+# Windows-only: required for bridge.flexdiag_bridge.VectorCom's real COM
+# backend. Lazy-imported inside VectorCom, so not required for the rest of
+# the test suite (mock-first, CLAUDE.md rule 1).
+vector = [
+    "pywin32; sys_platform == 'win32'",
+]
 
 [tool.setuptools]
-packages = ["protocol", "mock_ecu", "terminal"]
+packages = ["protocol", "mock_ecu", "terminal", "bridge"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
