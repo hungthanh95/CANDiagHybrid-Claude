@@ -6,7 +6,7 @@
 
 > Menu paths and exact CAPL call names vary by tool version. Where this guide says *"(verify in Help for your version)"*, confirm against your installed CANoe/CANalyzer Help. Pin the version you used at the top of your copy of this file.
 
-**Reference version used:** `Vector/CANalyzer ver 16 or 17` (fill in)
+**Reference version used:** `CANalyzer 16/17` (operator-confirmed; `TcpOpen`/`TcpListen` compile cleanly on this build, M2)
 
 ---
 

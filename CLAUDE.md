@@ -14,6 +14,13 @@ Components: `vector/capl/` (CAPL nodes), `bridge/` (Option B Python bridge), `mo
 
 ---
 
+## 1a. Current sequencing priority (operator override, 2026-06-12)
+
+- **Option B first.** Option A (CAPL TCP) Vector bring-up depends on an uncertain CAPL TCP/IP API license. The Option A CAPL code (`flexdiag_core.can`, `flexdiag_tcp.can`) is written and `flexdiag-reviewer`-approved (M2) but its Vector-side verification is parked. Prioritize **Option B** (`flexdiag_sysvar.can` + `bridge/`, M3) next — both transports still ship eventually, this only reorders the work.
+- **Flutter deferred.** `flutter_app/` (W5/M5) is paused. The Python terminal (`terminal/`) is the primary test client for all capabilities until Flutter is picked back up.
+
+---
+
 ## 2. Roles and model assignment
 
 Work is split so the strongest model handles low-volume / high-stakes decisions and cheaper models handle high-volume repetitive work. Each role is implemented as a subagent in `.claude/agents/`.
