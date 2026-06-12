@@ -1,0 +1,240 @@
+/* flexdiag_core.can -- shared diagnostic primitives (transport-agnostic).
+ * Implements docs/03-TECHNICAL-DETAIL.md §3.1.
+ * PROTECTED: protocol/security logic. Any change here needs flexdiag-reviewer
+ * approval (CLAUDE.md §3 rule 2, docs/04 §1.3/§2.6).
+ *
+ * Verify against your CANalyzer 16/17 Help: diagRequest/diagResize/
+ * diagSetPrimitiveData/diagGetPrimitiveData/diagSendRequest/diagIsNegativeResponse/
+ * diagGenerateKeyFromSeed/diagStartTesterPresent/diagStopTesterPresent/diagSetTarget
+ * signatures can vary by tool version.
+ *
+ * Only this file calls diagSendRequest / diagGenerateKeyFromSeed / tester-present
+ * functions (docs/04 §1.1). Transport nodes call the Do* helpers below and
+ * implement PublishRsp().
+ */
+
+variables
+{
+  const dword kMaxLen = 4095;
+
+  byte  gRsp[4095];
+  dword gRspLen;
+
+  dword gReqSeq;          // current correlation id
+  int   gReqKind;         // current operation kind: 0=RAW,1=READDTC,2=CLEARDTC,3=SECURITY,4=SESSION
+
+  // Security continuation state (docs/03 §3.1 nuance, docs/04 §2.6: explicit
+  // state, not inferred from timing). One outstanding SECURITY op at a time.
+  int   gSecActive;
+  dword gSecSeq;
+  byte  gSecLevel;        // odd level requested via SECURITY <level>
+}
+
+/* ---- Transport hook: each transport node defines this ----
+ *   void PublishRsp(dword seq, int status, byte data[], dword len, int kind);
+ *     status: 0 positive, 1 negative(NRC), 2 ok(non-UDS), 3 error
+ *     kind:   echoes ReqKind (0-6) of the operation this response belongs to
+ */
+
+on start
+{
+  diagSetTarget("ECU1");   // REQUIRED, especially on CANalyzer
+  write("FlexDiag core started, target ECU1");
+}
+
+/* Build + send a raw UDS request from a byte buffer. gReqKind is set by the
+ * caller before SendRaw() (do not set it here -- SecuritySendKey() calls
+ * SendRaw() while gReqKind must remain 3). */
+void SendRaw(dword seq, byte data[], dword len)
+{
+  diagRequest ECU1.* req;           // wildcard / generic request object
+  if (len > kMaxLen) len = kMaxLen;
+  gReqSeq = seq;
+  diagResize(req, len);
+  diagSetPrimitiveData(req, data, len);
+  diagSendRequest(req);
+}
+
+/* ---- High-level helpers: each sets gReqKind so PublishRsp() can echo it
+ * (Diag::RspKind / kind arg). TP_START/TP_STOP (kind 5/6) are dispatched
+ * directly by transport nodes, which call PublishRsp() themselves. */
+
+void DoRaw(dword seq, byte data[], dword len)
+{
+  gReqKind = 0;
+  SendRaw(seq, data, len);
+}
+
+void DoReadDtcByStatusMask(dword seq, byte mask)
+{
+  byte r[3];
+  gReqKind = 1;
+  r[0] = 0x19; r[1] = 0x02; r[2] = mask;
+  SendRaw(seq, r, 3);
+}
+
+/* v1: group fixed to FF FF FF (full clear); no args, no other call sanctioned
+ * (docs/03 §3.2). */
+void DoClearDtc(dword seq)
+{
+  byte r[4];
+  gReqKind = 2;
+  r[0] = 0x14; r[1] = 0xFF; r[2] = 0xFF; r[3] = 0xFF;
+  SendRaw(seq, r, 4);
+}
+
+void DoSessionControl(dword seq, byte session)
+{
+  byte r[2];
+  gReqKind = 4;
+  r[0] = 0x10; r[1] = session;
+  SendRaw(seq, r, 2);
+}
+
+/* Security step 1: request seed (odd level). The key step happens when the
+ * seed response arrives -- see on diagResponse below. */
+void DoSecurityRequestSeed(dword seq, byte level)
+{
+  byte r[2];
+  gReqKind = 3;
+  gSecActive = 1;
+  gSecSeq = seq;
+  gSecLevel = level;
+  r[0] = 0x27; r[1] = level;          // odd level => requestSeed
+  SendRaw(seq, r, 2);
+}
+
+/* Security step 2: send 27 <level> <key...>. `level` here is the even
+ * (sendKey) level; built from the key bytes produced by
+ * diagGenerateKeyFromSeed(). */
+void DoSendKey(dword seq, byte key[], dword len)
+{
+  byte req[258];
+  dword i;
+
+  if (len > 256) len = 256;           // bound: req[0..1] + key
+  gReqKind = 3;
+  req[0] = 0x27;
+  req[1] = gSecLevel + 1;              // sendKey = odd+1 (even)
+  for (i = 0; i < len; i++) req[i + 2] = key[i];
+  SendRaw(seq, req, len + 2);
+}
+
+void DoTpStart()
+{
+  diagStartTesterPresent();  // tool emits 3E 80 at the configured period/suppress-positive
+}
+
+void DoTpStop()
+{
+  diagStopTesterPresent();
+}
+
+/* Called from on diagResponse when a positive 67 <oddLevel> seed arrives.
+ * Generates the key via the attached seed-key DLL and sends 27 <evenLevel> key.
+ * On keygen failure: status=3 (ERR 500 keygen_fail), gSecActive cleared. */
+void SecuritySendKey(dword seq, byte seed[], dword seedLen)
+{
+  byte  key[256];
+  dword keyLen;
+  long  ret;
+
+  ret = diagGenerateKeyFromSeed(seed, seedLen, gSecLevel, "", 0,
+                                 key, elcount(key), keyLen);
+  if (ret != 0)
+  {
+    gSecActive = 0;
+    PublishRsp(seq, 3, gRsp, 0, gReqKind);   // ERR 500 keygen_fail
+    return;
+  }
+  DoSendKey(seq, key, keyLen);
+}
+
+/* Single response handler for the ECU1 diagnostic object. Dispatches on
+ * gReqKind, decides status/kind, and is the ONLY caller of PublishRsp()
+ * for ECU responses (CLAUDE.md §3 rule 4 / docs/03 §3.1). */
+on diagResponse ECU1.*
+{
+  long len;
+  byte oddLevel, evenLevel;
+
+  len = diagGetPrimitiveSize(this);
+  if (len > kMaxLen) len = kMaxLen;
+  diagGetPrimitiveData(this, gRsp, len);
+  gRspLen = len;
+
+  write("RSP seq=%d: %s", gReqSeq, GetHexString(gRsp, len));
+
+  if (diagIsNegativeResponse(this))
+  {
+    if (gSecActive && gReqSeq == gSecSeq)
+    {
+      gSecActive = 0;
+    }
+    PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> <nrc>
+    return;
+  }
+
+  // Security continuation: 67 <oddLevel> <seed...> -> generate+send key,
+  // do not publish yet. 67 <evenLevel> -> unlocked, status=2 (OK SEC).
+  if (gSecActive && gReqSeq == gSecSeq && gReqKind == 3 && len >= 2 && gRsp[0] == 0x67)
+  {
+    oddLevel  = gSecLevel;
+    evenLevel = gSecLevel + 1;
+
+    if (gRsp[1] == oddLevel)
+    {
+      byte seed[256];
+      dword seedLen, i;
+      seedLen = len - 2;
+      if (seedLen > elcount(seed)) seedLen = elcount(seed);
+      for (i = 0; i < seedLen; i++) seed[i] = gRsp[i + 2];
+      SecuritySendKey(gReqSeq, seed, seedLen);
+      return;
+    }
+    if (gRsp[1] == evenLevel)
+    {
+      gSecActive = 0;
+      PublishRsp(gReqSeq, 2, gRsp, len, gReqKind);   // -> OK SEC <gSecLevel>
+      return;
+    }
+  }
+
+  PublishRsp(gReqSeq, 0, gRsp, len, gReqKind);
+}
+
+/* ECU did not respond within the diagnostic timeout (P2*/timeout exhausted).
+ * Verify the exact CAPL event name against your installed Help -- some
+ * versions surface this via "on diagTimeout ECU1.*" or
+ * "on diagRequest ECU1.* / .TimeoutOccurred" rather than "on errorFrame".
+ * Reported as status=1 with a synthetic NRC so the transport always emits a
+ * terminal response (docs/03 §1.5: exactly one terminal response per command). */
+on diagOnTimeout ECU1.*
+{
+  byte timeoutRsp[3];
+  if (gSecActive && gReqSeq == gSecSeq) gSecActive = 0;
+  timeoutRsp[0] = 0x7F;
+  timeoutRsp[1] = 0x00;
+  timeoutRsp[2] = 0x00;
+  write("TIMEOUT seq=%d", gReqSeq);
+  PublishRsp(gReqSeq, 1, timeoutRsp, 3, gReqKind);
+}
+
+/* Hex-format helper for Write-window logging (docs/04 §3.7). */
+char gHexBuf[3 * 4095];
+char gHexNibble[16] = "0123456789ABCDEF";
+
+char* GetHexString(byte data[], dword len)
+{
+  dword i;
+  if (len > kMaxLen) len = kMaxLen;
+  for (i = 0; i < len; i++)
+  {
+    gHexBuf[i * 3]     = gHexNibble[(data[i] >> 4) & 0x0F];
+    gHexBuf[i * 3 + 1] = gHexNibble[data[i] & 0x0F];
+    gHexBuf[i * 3 + 2] = ' ';
+  }
+  if (len > 0) gHexBuf[len * 3 - 1] = 0;
+  else gHexBuf[0] = 0;
+  return gHexBuf;
+}
