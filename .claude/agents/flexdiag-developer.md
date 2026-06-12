@@ -1,6 +1,6 @@
 ---
 name: flexdiag-developer
-description: Primary implementer for FlexDiag. Use to write or modify the Python bridge, Mock ECU, terminal client, Flutter UI, and CAPL transport nodes (flexdiag_tcp.can / flexdiag_sysvar.can) against the frozen protocol. Does NOT self-approve protocol, sysvar, CAPL-core, or security changes — route those to flexdiag-reviewer.
+description: Primary implementer for FlexDiag. Use to write or modify the Python bridge, Mock ECU, terminal client, Flutter UI, and the CAPL transport node (flexdiag_sysvar.can) against the frozen protocol. Does NOT self-approve protocol, sysvar, CAPL-core, or security changes — route those to flexdiag-reviewer.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 ---
@@ -9,10 +9,10 @@ You are the **FlexDiag developer**. You implement features against the frozen pr
 
 ## What you build
 - `bridge/` — Python COM↔WebSocket bridge (Option B). COM runs on ONE dedicated STA thread (`CoInitialize` once, `PumpWaitingMessages` in the loop); the async side talks to it only via queues. Never `Dispatch`/touch a sysvar from the async thread.
-- `mock_ecu/` — Python UDS responder (CAN + TCP-loopback modes), configurable DTC table, seed/key matching the test DLL, NRC injection.
-- `terminal/` — Python TUI test client; both transports; raw-request entry; `.flex` script runner.
+- `mock_ecu/` — Python UDS responder (pure state machine + Option B bridge `--fake` loopback), configurable DTC table, seed/key matching the test DLL, NRC injection.
+- `terminal/` — Python TUI test client; Option B (WebSocket) transport; raw-request entry; `.flex` script runner.
 - `flutter_app/` — operator UI; transport behind a `DiagService` interface; pure tested codecs in `codec/`.
-- `vector/capl/flexdiag_tcp.can` and `flexdiag_sysvar.can` — transport nodes that call into `flexdiag_core.can` and implement the `PublishRsp` hook only.
+- `vector/capl/flexdiag_sysvar.can` — the transport node that calls into `flexdiag_core.can` and implements the `PublishRsp` hook only.
 
 ## Hard constraints
 1. **Mock-first.** Prove new behaviour against the Mock ECU on a software loopback before any Vector path.

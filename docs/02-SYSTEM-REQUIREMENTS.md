@@ -27,11 +27,11 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 
 | ID | Pri | Requirement |
 |----|-----|-------------|
-| FR-10 | M | The system shall support **Option A**: a CAPL TCP server inside CANoe/CANalyzer that a client connects to directly. |
+| FR-10 | M | ❌ **Removed (2026-06-12)** — The system shall support **Option A**: a CAPL TCP server inside CANoe/CANalyzer that a client connects to directly. Removed: CAPL TCP/IP API licensing uncertainty (R1); Option B is the sole transport. |
 | FR-11 | M | The system shall support **Option B**: a Python bridge using the Vector COM API + System Variables, exposed to clients over WebSocket. |
-| FR-12 | M | Both transports shall expose the **identical wire protocol**, so clients need no per-transport feature code. |
-| FR-13 | M | The **Flutter UI** shall let the operator switch transport (A/B) at runtime without restarting the app. |
-| FR-14 | M | The **Python terminal** shall let the user switch transport (A/B) at runtime. |
+| FR-12 | M | ❌ **Removed (2026-06-12)** — Both transports shall expose the **identical wire protocol**, so clients need no per-transport feature code. Removed: only one transport remains. |
+| FR-13 | M | ❌ **Removed (2026-06-12)** — The **Flutter UI** shall let the operator switch transport (A/B) at runtime without restarting the app. Removed: only one transport remains. |
+| FR-14 | M | ❌ **Removed (2026-06-12)** — The **Python terminal** shall let the user switch transport (A/B) at runtime. Removed: only one transport remains. |
 | FR-15 | M | The Option B bridge shall connect to **either** `CANoe.Application` **or** `CANalyzer.Application` (auto-detect or configurable), with no other code change. |
 | FR-16 | S | Clients shall automatically attempt bounded **reconnection** on transport loss and fail in-flight requests with a clear error. |
 
@@ -39,8 +39,8 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 
 | ID | Pri | Requirement |
 |----|-----|-------------|
-| FR-17 | M | The **Flutter UI** shall provide: connect/disconnect, transport switch, session control, read DTC (with decoded table), clear DTC, security unlock (single action), tester-present toggle, and a live log. |
-| FR-18 | M | The **Python terminal** shall provide: connect/disconnect, transport switch, all FR-1..FR-9 operations, raw-request entry, scripted command files, and verbose protocol tracing. |
+| FR-17 | M | The **Flutter UI** shall provide: connect/disconnect, session control, read DTC (with decoded table), clear DTC, security unlock (single action), tester-present toggle, and a live log. |
+| FR-18 | M | The **Python terminal** shall provide: connect/disconnect, all FR-1..FR-9 operations, raw-request entry, scripted command files, and verbose protocol tracing. |
 | FR-19 | S | The terminal shall support running a **script file** of commands for regression/bring-up. |
 
 ### 1.4 Mock ECU
@@ -51,7 +51,7 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 | FR-21 | M | The Mock ECU shall hold a **configurable DTC table** returned for `0x19 0x02`. |
 | FR-22 | M | The Mock ECU shall implement a **seed/key** exchange whose key algorithm matches the test DLL (or a documented test algorithm), so the full `0x27` flow can be validated offline. |
 | FR-23 | S | The Mock ECU shall optionally **inject NRCs** (e.g. `0x78` pending, `0x35` invalidKey, `0x33` securityAccessDenied) for negative-path testing. |
-| FR-24 | C | The Mock ECU shall support a software **TCP-loopback mode** (no CAN) so the protocol can be exercised with zero Vector dependency. |
+| FR-24 | C | The Mock ECU shall support a software **loopback mode** (no CAN), via the Option B bridge's `--fake` mode (`FakeVectorCom` wrapping `mock_ecu.uds.Ecu`), so the protocol can be exercised with zero Vector dependency. |
 
 ### 1.5 Logging / observability
 
@@ -66,15 +66,15 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 
 | ID | Pri | Requirement |
 |----|-----|-------------|
-| NFR-1 | M | **Tool-agnostic:** the same CAPL nodes and the same client builds shall run on both CANoe and CANalyzer (subject to the CAPL TCP API caveat for Option A). |
+| NFR-1 | M | **Tool-agnostic:** the same CAPL nodes and the same client builds shall run on both CANoe and CANalyzer. |
 | NFR-2 | M | **No CDD:** the system shall function with only the built-in Basic Diagnostics (UDS) template; no CDD/ODX file shall be required. |
 | NFR-3 | S | **Latency:** for a simple request (e.g. `19 02 FF`) against the Mock ECU on a virtual channel, round-trip client→client shall be ≤ 150 ms (excluding ECU-side processing). |
 | NFR-4 | M | **Correctness:** request bytes sent on the bus shall byte-for-byte match the client-supplied request; verified against trace. |
 | NFR-5 | S | **Resilience:** a malformed client line shall produce a protocol error response, never crash the CAPL node or bridge. |
 | NFR-6 | S | **Portability of clients:** the Python terminal shall run on Windows, Linux, and macOS; the Flutter UI shall build for desktop (Windows primary). |
-| NFR-7 | M | **Single-machine default:** transports shall bind to localhost by default; remote binding is explicit opt-in. |
+| NFR-7 | M | **Single-machine default:** the transport shall bind to localhost by default; remote binding is explicit opt-in. |
 | NFR-8 | S | **Maintainability:** version-sensitive CAPL (raw request syntax) shall be isolated in `flexdiag_core.can` so version ports touch one file. |
-| NFR-9 | C | **Throughput:** the system shall handle at least 20 sequential requests/second through either transport against the Mock ECU. |
+| NFR-9 | C | **Throughput:** the system shall handle at least 20 sequential requests/second through the Option B transport against the Mock ECU. |
 | NFR-10 | M | **Concurrency safety (Option B):** COM access shall be serialized on a single STA thread; no COM call shall be made from the async server thread. |
 
 ---
@@ -98,7 +98,7 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 | ENV-6 | **Seed-key DLL** following the Vector `GenerateKeyEx` convention, bitness matching the Vector process. |
 | ENV-7 | **Python 3.10+** for bridge, terminal, and Mock ECU. Bridge uses `pywin32` (COM) and a WebSocket lib; Mock ECU uses `python-can` (+ `can-isotp`) when on a real/virtual bus. |
 | ENV-8 | **Flutter** (stable channel) with desktop support enabled; `web_socket_channel` and `dart:io` sockets. |
-| ENV-9 | For Option A, the CAPL **TCP/IP API** must be available in the installed CANalyzer/CANoe build (always on CANoe; verify on CANalyzer). |
+| ENV-9 | ❌ **Removed (2026-06-12)** — For Option A, the CAPL **TCP/IP API** must be available in the installed CANalyzer/CANoe build (always on CANoe; verify on CANalyzer). Removed: Option A no longer exists. |
 
 ### 3.3 Constraints / assumptions
 
@@ -115,9 +115,8 @@ Requirement IDs: **FR** = functional, **NFR** = non-functional, **ENV** = enviro
 
 | Capability | Verified by |
 |------------|-------------|
-| Read DTC (FR-1/2) | Terminal + Flutter show decoded DTC table from Mock ECU and real ECU on both transports |
-| Tester Present (FR-4) | Trace shows periodic `3E 80`; toggle start/stop works on A and B |
+| Read DTC (FR-1/2) | Terminal + Flutter show decoded DTC table from Mock ECU and real ECU on Option B |
+| Tester Present (FR-4) | Trace shows periodic `3E 80`; toggle start/stop works on Option B |
 | Security (FR-5) | `27 01`→seed→DLL key→`27 02`→unlocked against Mock ECU (matching algo) and real ECU |
-| Transport switch (FR-13/14) | Same session switches A↔B and repeats Read DTC with no code change |
 | No CDD (NFR-2) | Entire flow runs with only Basic Diagnostics configured |
 | Tool-agnostic (NFR-1) | All four capabilities pass on CANoe and CANalyzer |

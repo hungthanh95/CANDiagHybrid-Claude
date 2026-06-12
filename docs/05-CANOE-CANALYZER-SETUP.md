@@ -6,7 +6,7 @@
 
 > Menu paths and exact CAPL call names vary by tool version. Where this guide says *"(verify in Help for your version)"*, confirm against your installed CANoe/CANalyzer Help. Pin the version you used at the top of your copy of this file.
 
-**Reference version used:** `CANalyzer 16/17` (operator-confirmed; `TcpOpen`/`TcpListen` compile cleanly on this build, M2)
+**Reference version used:** `CANalyzer 16/17` (operator-confirmed)
 
 ---
 
@@ -15,7 +15,7 @@
 - A measurement configuration (CANoe `.cfg` or CANalyzer `.cfg`) with:
   - VN1610 channel mapped.
   - A **Basic Diagnostics (UDS)** description named **`ECU1`** (no CDD).
-  - A **`Diag` System Variable** namespace (for Option B).
+  - A **`Diag` System Variable** namespace.
   - The **seed-key DLL** attached (for security access).
   - The FlexDiag CAPL nodes added to the measurement.
 - Verified `19 02 FF` and `27` flows against the Mock ECU or a real ECU.
@@ -27,9 +27,8 @@
 1. CANoe **or** CANalyzer installed, with the Vector driver (XL Driver Library) present.
 2. VN1610 connected; visible in **Vector Hardware Configuration**.
 3. Your **seed-key DLL** (`GenerateKeyEx` convention). **Bitness must match the tool process** (64-bit tool → 64-bit DLL).
-4. The FlexDiag CAPL files: `flexdiag_core.can`, `flexdiag_tcp.can`, `flexdiag_sysvar.can`.
+4. The FlexDiag CAPL files: `flexdiag_core.can`, `flexdiag_sysvar.can`.
 5. The sysvar definition file [`vector/capl/flexdiag.vsysvar`](../vector/capl/flexdiag.vsysvar) (or create the namespace manually, §4).
-6. For Option A only: confirm the **CAPL TCP/IP API** is available in your build (§7.1).
 
 ---
 
@@ -44,7 +43,7 @@ machine that will run CANoe/CANalyzer. Each item references the open risk
       Mock ECU, and protocol/codec tests.
 - [ ] **Option B COM dependency:** for the real `VectorCom` backend (not
       `--fake`), also `pip install -e .[vector]` (installs `pywin32` on
-      Windows). Not needed for Option A or for mock-first testing.
+      Windows). Not needed for mock-first testing (`bridge --fake`).
 - [ ] **Tool version confirmed:** CANoe/CANalyzer version installed is the
       reference version at the top of this doc (`CANalyzer 16/17`) or newer.
       If different, expect to re-verify CAPL syntax (R4) — see §10
@@ -104,9 +103,7 @@ This is the key step that avoids needing a CDD.
 
 ---
 
-## 4. System Variables — `Diag` namespace (Option B only)
-
-Skip this section if you are only using Option A.
+## 4. System Variables — `Diag` namespace
 
 ### 4.1 Import (preferred)
 
@@ -151,24 +148,12 @@ Create namespace **`Diag`** with:
 
 1. Open the **Measurement Setup** (CANoe) / **Configuration** (CANalyzer).
 2. Add a **CAPL node** on the CAN channel hotspot (or in the appropriate functional block — *verify in Help*).
-3. Attach **`flexdiag_core.can`** plus the transport node you're using:
-   - Option A: also attach **`flexdiag_tcp.can`**.
-   - Option B: also attach **`flexdiag_sysvar.can`**.
-   - (You may attach both transport nodes; pick the active one by which client connects. They share `flexdiag_core.can`.)
+3. Attach **`flexdiag_core.can`** and **`flexdiag_sysvar.can`**.
 4. **Compile** (CAPL Browser → Compile all). Fix any version-specific syntax in `flexdiag_core.can` first (raw request + sysvar accessors are the usual suspects).
 
 ---
 
-## 7. Transport-specific setup
-
-### 7.1 Option A — CAPL TCP server
-
-1. **Verify the TCP/IP API is available:** create a throwaway CAPL node containing a single `TcpOpen(...)`/`TcpListen(...)` and compile. If it compiles, you're good. If the functions are unknown, your build lacks the API — use **Option B** instead.
-2. In `flexdiag_tcp.can`, confirm the **port** (default `9000`) and that it binds to `127.0.0.1` (or `INADDR_ANY` only if you intend remote access — see security note).
-3. Start the measurement; the Write window should show `FlexDiag TCP listening on 9000`.
-4. Test from a shell: `python -m terminal --transport A --host 127.0.0.1 --port 9000`.
-
-### 7.2 Option B — COM + sysvar bridge
+## 7. Bridge runtime — COM + sysvar bridge
 
 1. Ensure the **`Diag` namespace** (§4) exists and `flexdiag_sysvar.can` is compiled.
 2. Start the measurement in the tool (the bridge attaches to a *running* tool).
@@ -180,7 +165,7 @@ Create namespace **`Diag`** with:
 
    To test the bridge/terminal/Mock-ECU loop without a real CANoe/CANalyzer (mock-first, CLAUDE.md rule 1), use `--fake` instead: `python -m bridge --fake --port 8770`.
 4. The bridge log should show the detected tool and `WebSocket listening on 8770`.
-5. Test: `python -m terminal --transport B --url ws://127.0.0.1:8770`.
+5. Test: `python -m terminal --host 127.0.0.1 --port 8770`.
 
 > **COM gotcha:** the bridge must be allowed to automate the tool. If `Dispatch("CANoe.Application")` fails, confirm the tool is running, a config is loaded, and (on locked-down machines) that COM automation isn't blocked by policy.
 
@@ -190,12 +175,10 @@ Create namespace **`Diag`** with:
 
 1. **Measurement starts** with no CAPL compile errors.
 2. **Manual Diagnostic Console:** send `19 02 FF` to `ECU1`, get a `59 02 ...` (against Mock ECU or real ECU). Confirms the diagnostic layer + channel + IDs.
-3. **Option A smoke test:** terminal connects over TCP, `HELLO` → `READY`, `READDTC FF` → `RSP 59 02 ...`.
-4. **Option B smoke test:** bridge up, terminal over WebSocket, same `READDTC` result.
-5. **Tester present:** `TP START` → trace shows periodic `3E 80`; `TP STOP` halts it.
-6. **Security:** `SECURITY 01` → trace shows `27 01` → `67 01 <seed>` → `27 02 <key>` → `67 02`; terminal shows `OK SEC 01`.
-7. **Switch transports** in the terminal and repeat `READDTC` — identical result.
-8. **Repeat the whole checklist on the other tool** (CANoe ↔ CANalyzer) before sign-off.
+3. **Option B smoke test:** bridge up, terminal over WebSocket, `HELLO` → `READY`, `READDTC FF` → `RSP 59 02 ...`.
+4. **Tester present:** `TP START` → trace shows periodic `3E 80`; `TP STOP` halts it.
+5. **Security:** `SECURITY 01` → trace shows `27 01` → `67 01 <seed>` → `27 02 <key>` → `67 02`; terminal shows `OK SEC 01`.
+6. **Repeat the whole checklist on the other tool** (CANoe ↔ CANalyzer) before sign-off.
 
 ---
 
@@ -218,7 +201,6 @@ To run steps 2–7 without a real ECU:
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| CAPL won't compile: unknown `Tcp*` | TCP/IP API not in this build | Use Option B |
 | CAPL won't compile: raw request / sysvar calls | Version-specific syntax | Adjust in `flexdiag_core.can` per Help |
 | Diagnostic Console `19 02 FF` times out | Wrong CAN IDs / baud / channel | Recheck §2–§3 against ECU; check trace for the request on the bus |
 | Seed-key DLL won't load | 32/64-bit mismatch | Use DLL matching tool bitness |
@@ -239,7 +221,6 @@ To run steps 2–7 without a real ECU:
 | Phys request ID | `0x7E0` |
 | Response ID | `0x7E8` |
 | Addressing | Normal 11-bit |
-| TCP port (Option A) | `9000` |
-| WebSocket (Option B) | `127.0.0.1:8770` |
+| WebSocket bridge | `127.0.0.1:8770` |
 | Tester-present period | 2000 ms, suppress positive |
 | Security level | odd = requestSeed, even = sendKey (e.g. `01`/`02`) |

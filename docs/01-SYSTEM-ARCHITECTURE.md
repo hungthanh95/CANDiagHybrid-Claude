@@ -9,7 +9,9 @@
 
 FlexDiag separates **UI/logic** (Flutter or Python terminal) from **CAN execution** (CANoe/CANalyzer + VN1610). The Vector tool is the diagnostic engine: it owns the hardware, the ISO-TP transport, and the seed-key DLL. Clients never touch the VN1610 directly.
 
-Two transports connect clients to the Vector tool. They are functionally interchangeable and expose the **same wire protocol** (see Technical Detail). A client picks one at connect time and can switch.
+A single transport (Option B: COM API + System Variables, exposed to clients over WebSocket) connects clients to the Vector tool, speaking one wire protocol (see Technical Detail).
+
+> **Removed (2026-06-12):** Option A (a CAPL TCP server transport) was removed due to uncertain CAPL TCP/IP API licensing on the operator's CANalyzer. See `docs/STATUS.md` §5 (R1) and ADR-3 below.
 
 ---
 
@@ -23,35 +25,32 @@ Two transports connect clients to the Vector tool. They are functionally interch
 │  • DTC view                  │        │  • REPL / scripted tests     │
 │  • Security flow             │        │  • raw request sender        │
 │  • Tester Present toggle     │        │  • protocol logger           │
-│  • Transport switch A/B      │        │  • Transport switch A/B      │
 └───────────────┬──────────────┘        └───────────────┬──────────────┘
                 │                                        │
-                │   same wire protocol (line-based)      │
+                │   same wire protocol (line-based,      │
+                │   Option B: WebSocket)                 │
                 │                                        │
-        ┌───────┴───────────────┬────────────────────────┴───────┐
-        │                       │                                │
-   Option A: TCP          Option B: WebSocket               (either)
-        │                       │
-        │                ┌──────┴───────────────────────┐
-        │                │   Python Bridge (Option B)   │
-        │                │  • WebSocket server          │
-        │                │  • Vector COM client (STA)   │
-        │                │  • sysvar read/write + events│
-        │                └──────┬───────────────────────┘
-        │                       │ COM API
-        │                       │ (CANoe.Application /
-        │                       │  CANalyzer.Application)
-        ▼                       ▼
+        ┌───────┴───────────────────────────────────────┴───────┐
+        │                                                        │
+        │                ┌───────────────────────────────┐      │
+        └───────────────►│   Python Bridge (Option B)    │◄─────┘
+                         │  • WebSocket server          │
+                         │  • Vector COM client (STA)   │
+                         │  • sysvar read/write + events│
+                         └──────┬───────────────────────┘
+                                │ COM API
+                                │ (CANoe.Application /
+                                │  CANalyzer.Application)
+                                ▼
 ┌───────────────────────────────────────────────────────────────────┐
 │                    CANoe / CANalyzer (measurement)                 │
 │                                                                   │
-│   ┌──────────────────┐   ┌────────────────────┐   ┌────────────┐  │
-│   │ flexdiag_tcp.can │   │ flexdiag_sysvar.can│   │ System Vars│  │
-│   │  (Option A node) │   │  (Option B node)   │◄──┤  Diag::*   │  │
-│   └────────┬─────────┘   └─────────┬──────────┘   └────────────┘  │
-│            │                       │                              │
-│            └───────────┬───────────┘                              │
-│                        ▼                                          │
+│            ┌────────────────────┐   ┌────────────┐                │
+│            │ flexdiag_sysvar.can│   │ System Vars│                │
+│            │  (Option B node)   │◄──┤  Diag::*   │                │
+│            └─────────┬──────────┘   └────────────┘                │
+│                      │                                            │
+│                      ▼                                            │
 │            ┌────────────────────────────┐                         │
 │            │     flexdiag_core.can      │                         │
 │            │  diagSendRequest / response│                         │
@@ -83,15 +82,13 @@ Two transports connect clients to the Vector tool. They are functionally interch
 
 ### 3.1 Clients
 
-**Flutter UI** — operator-facing. Owns: connection management, transport selection, service-byte construction, response/DTC decoding, security flow orchestration (as a single user action), tester-present toggle, and logging. Stateless with respect to the ECU beyond UI session state.
+**Flutter UI** — operator-facing. Owns: connection management, service-byte construction, response/DTC decoding, security flow orchestration (as a single user action), tester-present toggle, and logging. Stateless with respect to the ECU beyond UI session state.
 
-**Python terminal UI** — developer-facing. Same protocol and transports, plus a raw-bytes escape hatch, scripting, and verbose protocol tracing. Used to bring up the protocol before the Flutter UI exists and to run regression scripts against the Mock ECU.
+**Python terminal UI** — developer-facing. Same protocol, plus a raw-bytes escape hatch, scripting, and verbose protocol tracing. Used to bring up the protocol before the Flutter UI exists and to run regression scripts against the Mock ECU.
 
 Both clients share a conceptual **protocol client library** (implemented once per language) so behaviour is identical.
 
-### 3.2 Transports
-
-**Option A — CAPL TCP server.** `flexdiag_tcp.can` runs a TCP listener inside the measurement. The client opens a raw TCP socket. Lowest number of moving parts; no extra process. Availability of the CAPL TCP/IP API must be confirmed on the target CANalyzer license.
+### 3.2 Transport
 
 **Option B — COM + System Variables.** `flexdiag_sysvar.can` reacts to changes on a `Diag::*` sysvar namespace. The **Python bridge** writes requests to sysvars over COM and listens for response sysvar change events, re-exposing everything as WebSocket to the client. COM diagnostic objects are *not* used — only sysvars — which is why it works identically on CANalyzer and CANoe.
 
@@ -116,11 +113,10 @@ Both clients share a conceptual **protocol client library** (implemented once pe
 ### 4.1 Request/response (e.g. Read DTC)
 
 ```
-Client                Transport            CAPL core            Diag layer      ECU
+Client                Bridge/Transport     CAPL core            Diag layer      ECU
   │  REQ 19 02 FF        │                    │                    │             │
   ├─────────────────────►│                    │                    │             │
-  │                      │  (A: TcpReceive /  │                    │             │
-  │                      │   B: on sysvar)    │                    │             │
+  │                      │  (on sysvar write) │                    │             │
   │                      ├───────────────────►│ SendRawDiag()      │             │
   │                      │                    ├───────────────────►│ 19 02 FF    │
   │                      │                    │                    ├────────────►│
@@ -159,14 +155,9 @@ Client ◄ OK TP
 
 ---
 
-## 5. Transport switching
+## 5. Transport interface
 
-A transport is chosen at connect time, not compiled in. Clients hold a `Transport` interface with two implementations:
-
-- `TcpTransport(host, port)` → Option A.
-- `WebSocketTransport(url)` → Option B (bridge).
-
-Switching = disconnect current transport, instantiate the other, reconnect. Because both speak the identical line protocol above the transport, no feature code changes. The active transport is shown in the UI status bar.
+Clients depend on a `Transport`/`DiagService` interface (CLAUDE.md rule 4), implemented today by `WebSocketTransport(url)` → Option B (bridge). Feature code is unaware of which concrete implementation is active; this keeps the door open for a future alternate implementation without touching feature code, but only Option B exists/ships in v1.
 
 ---
 
@@ -174,9 +165,9 @@ Switching = disconnect current transport, instantiate the other, reconnect. Beca
 
 | Topology | Use |
 |----------|-----|
-| **All-software** (no Vector) | Terminal ⇄ TCP loopback ⇄ Mock ECU. Earliest dev/CI. Option A only (no Vector needed). |
-| **Vector + virtual CAN + Mock ECU** | Full Vector path, virtual bus, mock target. Validates CAPL + transports without a real ECU. |
-| **Vector + VN1610 + real ECU** | Production. Either transport, CANoe or CANalyzer. |
+| **All-software** (no Vector) | Terminal ⇄ WebSocket ⇄ Python bridge (`bridge --fake`) ⇄ Mock ECU (`mock_ecu.uds.Ecu`). Earliest dev/CI; no Vector needed. |
+| **Vector + virtual CAN + Mock ECU** | Full Vector path, virtual bus, mock target. Validates CAPL + the Option B transport without a real ECU. |
+| **Vector + VN1610 + real ECU** | Production. Option B, CANoe or CANalyzer. |
 
 ---
 
@@ -190,6 +181,8 @@ Switching = disconnect current transport, instantiate the other, reconnect. Beca
 
 **ADR-3: One wire protocol for both transports.**
 *Context:* Two transports risk two protocols. *Decision:* A single line-based protocol sits above TCP and WebSocket alike. *Consequence:* Clients implement features once; switching is purely a transport concern.
+
+**Superseded 2026-06-12:** Option A (CAPL TCP) removed; only Option B (COM + sysvar bridge) remains. This ADR's rationale (one protocol shared by two transports) is preserved as historical context; in practice only Option B is implemented.
 
 **ADR-4: Mock-first development.**
 *Context:* Hardware/ECU access is scarce and slow. *Decision:* Build Mock ECU + terminal first, on a software loopback. *Consequence:* The client stack is testable offline and in CI; Vector integration is added without rewriting clients.
@@ -209,4 +202,4 @@ Switching = disconnect current transport, instantiate the other, reconnect. Beca
 
 **Reconnection.** Clients detect transport drop and attempt bounded reconnect; in-flight requests are failed with a transport-error result, never silently lost.
 
-**Security of the channel.** TCP/WebSocket bind to `127.0.0.1` by default (same machine as the Vector tool). Remote operation is opt-in and out of scope for v1 hardening.
+**Security of the channel.** The WebSocket bridge binds to `127.0.0.1` by default (same machine as the Vector tool). Remote operation is opt-in and out of scope for v1 hardening.

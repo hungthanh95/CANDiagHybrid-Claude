@@ -3,14 +3,16 @@
 **Document:** Rules & Conventions
 **Status:** Draft v1.0
 
-These rules keep the two transports interchangeable, the protocol stable, and the code portable across CANoe/CANalyzer and tool versions. They are normative: deviations need a note in the relevant doc.
+These rules keep the protocol stable and the code portable across CANoe/CANalyzer and tool versions. They are normative: deviations need a note in the relevant doc.
+
+> **Note (2026-06-12):** Option A (CAPL TCP) was removed; Option B (COM + System Variables / WebSocket bridge) is the sole transport. See `docs/STATUS.md` §5 (R1) and `CLAUDE.md` §1a.
 
 ---
 
 ## 1. Protocol rules (highest priority — everything depends on these)
 
-1. **One protocol, two transports.** Option A (TCP) and Option B (sysvar/WebSocket) MUST expose byte-identical protocol semantics. No verb, field, or behaviour may exist on one transport only.
-2. **The protocol is frozen at M0.** Changes after M0 require a version bump in the `HELLO`/`READY` handshake (`proto=N`) and updates to both clients and both transports in the same change.
+1. **One protocol, single transport.** Option B (sysvar/WebSocket) MUST expose the documented wire-protocol semantics. No verb or field may be added without a `proto=N` bump (rule 2).
+2. **The protocol is frozen at M0.** Changes after M0 require a version bump in the `HELLO`/`READY` handshake (`proto=N`) and updates to both clients and the transport in the same change.
 3. **Client builds SIDs; server forwards raw.** At the protocol boundary, request/response payloads are always full UDS frames. The CAPL layer and bridge MUST NOT silently rewrite UDS bytes (the only CAPL-built bytes are the security key-send and tester-present, which are part of documented multi-step flows).
 4. **Every terminal command gets exactly one terminal response** (`RSP`/`NRC`/`OK`/`ERR`) carrying the request's `SEQ`. Async notifications use `EVT` at `SEQ=0`.
 5. **NRC ≠ ERR.** An ECU negative response is `NRC <sid> <nrc>`. `ERR` is reserved for protocol/tool failures that never reached or never returned from the ECU.
@@ -21,7 +23,7 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 
 ## 2. CAPL rules
 
-1. **All diagnostic calls live in `flexdiag_core.can`.** Transport nodes (`flexdiag_tcp.can`, `flexdiag_sysvar.can`) MUST NOT call `diagSendRequest`, `diagGenerateKeyFromSeed`, or tester-present functions directly — they call core helpers and implement the `PublishRsp` hook only.
+1. **All diagnostic calls live in `flexdiag_core.can`.** The transport node (`flexdiag_sysvar.can`) MUST NOT call `diagSendRequest`, `diagGenerateKeyFromSeed`, or tester-present functions directly — it calls core helpers and implements the `PublishRsp` hook only.
 2. **Isolate version-sensitive syntax.** Raw-request construction (`diagRequest ECU1.*`, `diagSetPrimitiveData`, sysvar data get/set) is the most version-fragile part. Keep it in `flexdiag_core.can` (and the thin sysvar accessors) so a tool-version port touches one or two files.
 3. **`diagSetTarget("ECU1")` on `on start`** in every transport node — required on CANalyzer and harmless on CANoe. The qualifier `ECU1` MUST match the Basic Diagnostics ECU name exactly.
 4. **No CDD assumptions.** Never reference symbolic request/parameter names; only raw bytes. Decoding is the client's job.
@@ -46,7 +48,7 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 
 ## 4. Flutter / Dart rules
 
-1. **Transport behind an interface.** Screens depend on `DiagService`, never on a concrete `TcpTransport`/`WsTransport`. Switching transport rebuilds the implementation behind the service; UI code is unaware.
+1. **Transport behind an interface.** Screens depend on `DiagService`, never on a concrete `WsTransport`/`Transport` implementation. UI code is unaware of the underlying transport.
 2. **Codecs are pure and tested.** DTC/NRC decoding lives in `codec/` as pure functions with unit tests. No I/O in codecs.
 3. **All bytes in, all bytes logged.** The raw request/response line is always available in the log view for support.
 4. **No business logic in widgets.** Service orchestration (e.g. the single-action security unlock) lives in `services/`, not in button handlers.
@@ -63,9 +65,9 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 | CAPL functions | `PascalCase` verbs | `DoReadDtc`, `SecuritySendKey` |
 | CAPL files | `flexdiag_<role>.can` | `flexdiag_core.can` |
 | Python modules | `snake_case` | `flexdiag_bridge.py` |
-| Dart files | `snake_case.dart` | `tcp_transport.dart` |
+| Dart files | `snake_case.dart` | `codec.dart` |
 | Diagnostic ECU qualifier | `ECU1` (fixed in v1) | — |
-| Default ports | TCP `9000`, WS `8770` | — |
+| Default port | WS `8770` | — |
 | Default CAN IDs | phys req `0x7E0`, resp `0x7E8` | — |
 
 ---
@@ -81,7 +83,7 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 ## 7. Git / workflow rules
 
 1. **Conventional commits:** `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:` with a scope, e.g. `feat(capl): add security key-send continuation`.
-2. **Protocol changes are atomic:** a single commit/PR updates the spec doc, both transports, and both clients. Never merge a protocol change that lands on only one side.
+2. **Protocol changes are atomic:** a single commit/PR updates the spec doc, the transport, and both clients. Never merge a protocol change that lands on only one side.
 3. **No secrets in the repo:** real seed-key DLLs, ECU keys, and customer CAN matrices are kept out of version control; only the *test* DLL/algorithm and Mock ECU live in-repo.
 4. **Each PR states which topology it was tested on** (software loopback / virtual CAN / VN1610 + real ECU) and on which tool (CANoe/CANalyzer).
 5. **Docs travel with code.** Behaviour changes update the relevant `docs/*.md` in the same PR.
@@ -91,7 +93,7 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 ## 8. Testing rules
 
 1. **Mock-first.** New protocol behaviour is proven against the Mock ECU (software loopback) before touching Vector.
-2. **Both transports, every capability.** A capability is "done" only when it passes on Option A and Option B.
+2. **Single transport (Option B).** All capabilities ship on the COM + sysvar bridge; the prior Option A (CAPL TCP) was removed on 2026-06-12 due to CAPL TCP/IP API licensing uncertainty. Release requires passing on CANoe and CANalyzer.
 3. **Both tools for release.** Before tagging v1, every capability passes on CANoe and on CANalyzer.
 4. **Negative paths are tested,** not just happy paths: at least `0x78` pending, `0x35` invalidKey, `0x33` securityAccessDenied, malformed protocol line, and transport drop mid-request.
 5. **Byte-accuracy is verified against a trace** for at least one request per service (NFR-4).
@@ -100,7 +102,7 @@ These rules keep the two transports interchangeable, the protocol stable, and th
 
 ## 9. Safety / operational rules
 
-1. **Localhost by default.** Transports bind to `127.0.0.1`. Remote binding is an explicit, documented opt-in and is not part of v1 hardening.
+1. **Localhost by default.** The WebSocket bridge binds to `127.0.0.1`. Remote binding is an explicit, documented opt-in and is not part of v1 hardening.
 2. **Security access is gated by intent.** The tool only performs `0x27` when the operator explicitly triggers it; no automatic unlocking.
 3. **Real keys never logged.** Seeds may be logged for debugging; generated keys MUST NOT be written to persistent logs.
 4. **The tool owns the hardware.** Clients never access `vxlapi` directly; the VN1610 is driven only by the measurement (ENV-10).
@@ -117,6 +119,6 @@ The project is built with AI agents under defined roles. The **executable contra
    - **Tester** (`flexdiag-tester`, Sonnet to author / Haiku to run) — codec unit tests, negative-path tests, regression runs on both transports.
    - **Status** (`flexdiag-status`, Haiku) — maintains `docs/STATUS.md`.
 2. **Separation of duty.** The developer role MUST NOT self-approve changes to protected areas (protocol, sysvar layout, `flexdiag_core.can`, security path). The reviewer role approves those before merge.
-3. **Protocol changes are atomic and reviewed** (restates §1): spec doc + both transports + both clients + `proto=N` bump, in one PR, with reviewer approval.
-4. **Status is evidence-based.** A capability reaches ✅ in `docs/STATUS.md` only on a tester-confirmed pass on **both** transports; otherwise it stays 🟡/⬜.
+3. **Protocol changes are atomic and reviewed** (restates §1): spec doc + transport + both clients + `proto=N` bump, in one PR, with reviewer approval.
+4. **Status is evidence-based.** A capability reaches ✅ in `docs/STATUS.md` only on a tester-confirmed pass on Option B; otherwise it stays 🟡/⬜.
 5. **Docs travel with code** (restates §7): a behaviour change updates the relevant `docs/*.md` and `docs/STATUS.md` in the same PR.
