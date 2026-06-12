@@ -1,6 +1,6 @@
 # FlexDiag — Project Status
 
-**Maintained by:** `flexdiag-status` (Haiku) · **Updated:** `____-__-__`
+**Maintained by:** `flexdiag-status` (Haiku) · **Updated:** `2026-06-12`
 
 > Single source of truth for project state. Do not mark anything ✅ without a tester-confirmed result on **both** transports. Legend: ✅ pass · 🟡 partial · ⬜ not yet · ❌ failing.
 
@@ -10,8 +10,8 @@
 
 | Milestone | Definition of done | Status |
 |-----------|--------------------|--------|
-| **M0** Protocol frozen | Wire protocol + sysvar layout signed off | ⬜ Not started |
-| **M1** Software loopback | Terminal ⇄ Mock ECU over plain TCP, all 4 capabilities | ⬜ Not started |
+| **M0** Protocol frozen | Wire protocol + sysvar layout signed off | ✅ Done — protocol frozen at proto=1, sysvar layout frozen (reviewer-approved) |
+| **M1** Software loopback | Terminal ⇄ Mock ECU over plain TCP, all 5 capabilities | ✅ Done — Mock ECU + terminal on software TCP loopback; 87 tests; all 5 capabilities verified; ruff + black clean |
 | **M2** Option A live | Terminal ⇄ CAPL TCP ⇄ Vector ⇄ (virtual + VN1610) | ⬜ Not started |
 | **M3** Option B live | Terminal ⇄ bridge ⇄ COM/sysvar ⇄ Vector | ⬜ Not started |
 | **M4** Transport switch | Runtime A/B switch in terminal and Flutter | ⬜ Not started |
@@ -26,11 +26,11 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 | Capability | Option A (TCP) | Option B (COM/sysvar) | CANoe | CANalyzer | Mock ECU |
 |------------|:--:|:--:|:--:|:--:|:--:|
-| Read DTC (`0x19 02`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Tester Present (`0x3E`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Security Access (`0x27`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Session Control (`0x10`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Clear DTC (`0x14`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| Read DTC (`0x19 02`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Tester Present (`0x3E`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Security Access (`0x27`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Session Control (`0x10`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Clear DTC (`0x14`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 
 ---
 
@@ -39,14 +39,14 @@ Cells show current verified state. A capability is "done" only when **Option A**
 | FR | Requirement (short) | Covering test(s) | State |
 |----|---------------------|------------------|-------|
 | FR-1 | Read DTC `19 02` | `____` | ⬜ |
-| FR-2 | Client-side DTC decode | `test_dtc_decode` | ⬜ |
+| FR-2 | Client-side DTC decode | `test_protocol_dtc` | ✅ |
 | FR-3 | Clear DTC `14` | `____` | ⬜ |
 | FR-4 | Periodic Tester Present | `____` | ⬜ |
 | FR-5 | Security seed/key | `____` | ⬜ |
 | FR-6 | Session control | `____` | ⬜ |
-| FR-7 | Raw request | `____` | ⬜ |
-| FR-8 | NRC surfaced distinctly | `test_nrc_*` | ⬜ |
-| FR-9 | `0x78` pending handled | `test_pending` | ⬜ |
+| FR-7 | Raw request | `test_smoke` | ✅ |
+| FR-8 | NRC surfaced distinctly | `test_server_negatives`, `test_protocol_nrc` | ✅ |
+| FR-9 | `0x78` pending handled | `test_server_negatives::test_pending_0x78_then_final` | ✅ |
 | FR-10 | Option A transport | `____` | ⬜ |
 | FR-11 | Option B transport | `____` | ⬜ |
 | FR-12 | Identical protocol both transports | `____` | ⬜ |
@@ -55,10 +55,10 @@ Cells show current verified state. A capability is "done" only when **Option A**
 | FR-15 | Bridge auto-detect CANoe/CANalyzer | `____` | ⬜ |
 | FR-16 | Reconnection | `test_reconnect` | ⬜ |
 | FR-17 | Flutter feature set | `____` | ⬜ |
-| FR-18 | Terminal feature set | `____` | ⬜ |
-| FR-20 | Mock ECU responds to core SIDs | `____` | ⬜ |
-| FR-22 | Mock seed/key matches DLL | `____` | ⬜ |
-| FR-23 | Mock NRC injection | `____` | ⬜ |
+| FR-18 | Terminal feature set | `test_flex_capabilities`, `test_smoke` | ✅ |
+| FR-20 | Mock ECU responds to core SIDs | `test_mock_uds` | ✅ |
+| FR-22 | Mock seed/key matches DLL | `test_mock_uds::test_security_*` | ✅ |
+| FR-23 | Mock NRC injection | `test_mock_uds::test_inject_next_nrc`, `test_server_negatives` | ✅ |
 
 > Add NFR rows (latency NFR-3, byte-accuracy NFR-4, COM serialization NFR-10) as they get coverage.
 
@@ -68,6 +68,8 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-12 | `10b04e1` | M1: Mock ECU + terminal + protocol codec on software TCP loopback; 87 tests (codec, mock UDS, server negatives, .flex regression per capability); ruff+black clean | software loopback | n.a. |
+| 2026-06-12 | `____` | M0: froze wire protocol (proto=1) + Diag sysvar layout in docs/03-TECHNICAL-DETAIL.md; added Diag::RspKind sysvar; moved 00/01/02/03/05/STATUS/RUNBOOK into docs/ | — | n.a. |
 | `____-__-__` | `____` | _(initial scaffold)_ | — | — |
 
 > Topology = software loopback / virtual CAN / VN1610+real ECU. Tool = CANoe / CANalyzer / n.a.
@@ -88,7 +90,7 @@ Cells show current verified state. A capability is "done" only when **Option A**
 
 ## 6. Next actions
 
-- [ ] Freeze wire protocol + sysvar layout → **M0**.
-- [ ] Build Mock ECU + terminal on software loopback → **M1**.
+- [x] Freeze wire protocol + sysvar layout → **M0**.
+- [x] Build Mock ECU + terminal on software loopback → **M1**.
 - [ ] Verify CAPL TCP/IP API on the target CANalyzer build (resolves R1).
 - [ ] Stand up Vector config per `docs/05` → **M2**.

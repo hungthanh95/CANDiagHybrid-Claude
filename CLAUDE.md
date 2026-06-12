@@ -24,6 +24,7 @@ Work is split so the strongest model handles low-volume / high-stakes decisions 
 | **Developer** | `flexdiag-developer` | Sonnet 4.6 | Implements bridge, Mock ECU, terminal, Flutter UI, and CAPL transport nodes against the frozen protocol. |
 | **Tester** | `flexdiag-tester` | Sonnet 4.6 (writes tests) / Haiku 4.5 (runs regressions) | Writes unit tests (codecs), negative-path tests (NRC `0x78`/`0x35`/`0x33`), and runs `.flex` regression scripts against the Mock ECU. |
 | **Status / PM** | `flexdiag-status` | Haiku 4.5 | Keeps `docs/STATUS.md` current: milestone state (M0–M6), capability × transport × tool pass matrix, and FR→test traceability. |
+| **PR shipper** | `flexdiag-shipper` | Sonnet 4.6 | Owns the PR lifecycle: opens PRs from feature branches to `main`, reviews them against `docs/04` §7 (git rules), and merges once CI is green and approvals are in. Routes protected-area PRs to `flexdiag-reviewer` for approval; does **not** self-approve them. |
 
 > If a model alias isn't available in your Claude Code build, map it via the model-config environment variables (see Claude Code docs). For larger architectural decisions you may run the reviewer on a higher tier (e.g. Fable 5) — but everyday reviews use Opus.
 

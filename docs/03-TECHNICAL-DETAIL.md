@@ -9,6 +9,8 @@ This document specifies the wire protocol, the System Variable layout, the CAPL 
 
 ## 1. Wire protocol (shared by Option A and Option B)
 
+**Frozen at `proto=1`** as of M0 — see `docs/STATUS.md` §1.
+
 ### 1.1 Design
 
 A **line-based, ASCII** protocol. One message per line, terminated by `\n`. Fields are space-separated. Hex bytes are uppercase, no `0x`, space-separated. This keeps CAPL parsing trivial (CAPL JSON parsing is painful) and is human-readable in logs and in the terminal.
@@ -25,10 +27,10 @@ A **line-based, ASCII** protocol. One message per line, terminated by `\n`. Fiel
 
 | Verb | Args | Meaning |
 |------|------|---------|
-| `HELLO` | `proto=1` | Handshake; server replies `READY`. |
+| `HELLO` | `proto=1` | Optional handshake; if sent, server replies `<seq> READY ...` echoing seq. |
 | `SESSION` | `<session_hex>` | `0x10 <session>` e.g. `SESSION 03`. |
 | `READDTC` | `[mask_hex]` | `0x19 02 <mask>`; default mask `FF`. |
-| `CLEARDTC` | `[group_hex3]` | `0x14 <group>`; default `FF FF FF`. |
+| `CLEARDTC` | — | `0x14 FF FF FF` (full clear; group selection out of scope for v1). |
 | `SECURITY` | `<level_hex>` | Full seed/key unlock at odd level, e.g. `SECURITY 01`. |
 | `TP` | `START` \| `STOP` | Periodic tester present. |
 | `RAW` | `<byte> <byte> ...` | Send arbitrary UDS request bytes. |
@@ -39,13 +41,15 @@ A **line-based, ASCII** protocol. One message per line, terminated by `\n`. Fiel
 
 | Verb | Args | Meaning |
 |------|------|---------|
-| `READY` | `proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` | Handshake ack. |
+| `READY` | `proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` | Handshake ack. Sent unsolicited as `0 READY proto=1 tool=<CANoe\|CANalyzer> transport=<A\|B>` immediately on connect (both transports); also sent as `<seq> READY ...` if the client sends `HELLO`. |
 | `RSP` | `<byte> <byte> ...` | Positive UDS response (full bytes incl. SID+0x40). |
 | `NRC` | `<sid_hex> <nrc_hex>` | Negative response `7F <sid> <nrc>`. |
-| `OK` | `<what>` | Non-UDS success (e.g. `OK TP`, `OK SEC 01`). |
+| `OK` | `<what>` | Non-UDS success. The only two v1 forms are `OK TP` (terminal response to both `TP START` and `TP STOP`; seq correlation tells the client which) and `OK SEC <level_hex>` (terminal response to a successful `SECURITY <level_hex>` unlock, where `<level_hex>` is the odd level that was requested, 2 uppercase hex digits, e.g. `OK SEC 01`). |
 | `ERR` | `<code> <text>` | Protocol/tool error (not an ECU NRC). |
-| `EVT` | `<name> [args]` | Async event (seq `0`), e.g. `EVT TP_TICK`. |
+| `EVT` | `<name> [args]` | Reserved for future async notifications. No `EVT` messages are defined in `proto=1`. |
 | `PONG` | — | Liveness ack. |
+
+`SESSION` responses use `RSP` like `READDTC`/`RAW` (positive UDS bytes), never `OK`.
 
 ### 1.4 Examples
 
@@ -67,17 +71,27 @@ A **line-based, ASCII** protocol. One message per line, terminated by `\n`. Fiel
 
 15 TP START
 15 OK TP
-0 EVT TP_TICK                  # optional periodic notification
+
+16 SESSION 03
+16 RSP 50 03 00 32 01 F4
 ```
 
 ### 1.5 Rules
 
 - Server **must** echo the request `SEQ` on its terminal response (`RSP`/`NRC`/`OK`/`ERR`).
 - A command yields exactly **one** terminal response (plus optional `EVT` lines at seq `0`).
-- Unknown verb → `ERR 400 unknown_verb`.
-- Malformed hex / length → `ERR 422 bad_args`.
-- Tool/transport failure → `ERR 503 tool_unavailable`.
 - Bytes are always **full UDS frames** at the protocol boundary (the client builds SIDs; the server forwards raw). This keeps the server dumb and the client authoritative.
+- Lines (including `RAW` byte payloads) are capped at `kMaxLen` = 4095 bytes (§3.1). A request that would exceed this is rejected with `ERR 422 bad_args` before dispatch.
+
+`ERR` codes are a closed set in `proto=1`:
+
+| Code | Text | Meaning |
+|------|------|---------|
+| 400 | `unknown_verb` | Verb not recognized |
+| 422 | `bad_args` | Malformed hex/length/args, or line exceeds max length |
+| 500 | `keygen_fail` | Seed-key DLL `diagGenerateKeyFromSeed` failed during SECURITY |
+| 503 | `tool_unavailable` | CANoe/CANalyzer COM/tool not reachable |
+| 504 | `ecu_timeout` | No ECU response within the diagnostic timeout |
 
 ---
 
@@ -95,9 +109,14 @@ Namespace `Diag`. The bridge writes the request and bumps a trigger; CAPL reacts
 | `Diag::RspData` | Data (byte array) | CAPL | Raw response bytes (positive or `7F..`). |
 | `Diag::RspSeq` | Int | CAPL | Echoed correlation id. |
 | `Diag::RspStatus` | Int | CAPL | 0=positive, 1=negative(NRC), 2=ok(non-UDS), 3=error. |
+| `Diag::RspKind` | Int | CAPL | Echoes the `ReqKind` (same 0–6 enum) of the operation this response belongs to. Lets the bridge format `OK TP` / `OK SEC <level>` without per-seq state. |
 | `Diag::RspTrigger` | Int | CAPL | Incremented when a response is ready (bridge reacts on change). |
 
 > Why both `ReqData` and `ReqKind/ReqArg`? `RAW` uses `ReqData` directly. Higher-level verbs (`READDTC`, `SECURITY`, …) use `ReqKind`+`ReqArg` so CAPL runs the multi-step logic (e.g. security seed/key) rather than the bridge pre-building frames. This keeps the seed/key dance and tester-present timing inside the tool.
+
+> `PING`, `BYE`, and `HELLO` are handled entirely by the transport layer (TCP node / Python bridge) and never reach `flexdiag_core.can` or `Diag::Req*`. The `ReqKind` enum (0–6) covers only operations forwarded to the diagnostic core.
+
+> `Diag::ReqData`/`Diag::RspData` are CANoe/CANalyzer System Variables of type **Data** (variable-length byte array, max `kMaxLen`=4095 bytes per §3.1). Via COM, `.Value` reads as a tuple of ints 0–255 (bridge: `bytes(sv('RspData').Value)`); writes accept a sequence of ints 0–255 (bridge: `sv('ReqData').Value = tuple(data)`).
 
 Define these in a `.vsysvar` file imported in the setup guide.
 
@@ -120,11 +139,16 @@ variables
   byte  gReq[4095];
   byte  gRsp[4095];
   dword gReqSeq;          // current correlation id
+  int   gReqKind;         // current operation kind (0-6, same enum as Diag::ReqKind)
+  // gReqSeq/gReqKind are single-slot globals: FlexDiag v1 assumes one outstanding
+  // diagnostic request at a time per connection; a future concurrent-request design
+  // would need per-seq state instead.
 }
 
 /* ---- Transport hook: each transport node defines these ---- */
-//   void PublishRsp(dword seq, int status, byte data[], dword len);
+//   void PublishRsp(dword seq, int status, byte data[], dword len, int kind);
 //     status: 0 positive, 1 negative, 2 ok, 3 error
+//     kind:   echoes the ReqKind (0-6) of the operation this response belongs to
 // They are declared here as 'export' contracts; transport nodes implement.
 
 on start
@@ -152,16 +176,20 @@ on diagResponse ECU1.*
   diagGetPrimitiveData(this, gRsp, len);
 
   if (diagIsNegativeResponse(this))
-    PublishRsp(gReqSeq, 1, gRsp, len);   // 7F <sid> <nrc>
+    PublishRsp(gReqSeq, 1, gRsp, len, gReqKind);   // 7F <sid> <nrc>
   else
-    PublishRsp(gReqSeq, 0, gRsp, len);
+    PublishRsp(gReqSeq, 0, gRsp, len, gReqKind);
 }
 
 /* ---- High-level helpers ---- */
+/* Each Do* helper sets gReqKind so PublishRsp() can echo it (Diag::RspKind).
+ * The TP helpers (kind 5/6) are dispatched directly by the transports, which
+ * call PublishRsp(seq,2,buf,0,5) / PublishRsp(seq,2,buf,0,6) themselves. */
 
 void DoSession(dword seq, byte session)
 {
   byte r[2];
+  gReqKind = 4;
   r[0] = 0x10; r[1] = session;
   SendRaw(seq, r, 2);
 }
@@ -169,6 +197,7 @@ void DoSession(dword seq, byte session)
 void DoReadDtc(dword seq, byte mask)
 {
   byte r[3];
+  gReqKind = 1;
   r[0] = 0x19; r[1] = 0x02; r[2] = mask;
   SendRaw(seq, r, 3);
 }
@@ -176,6 +205,7 @@ void DoReadDtc(dword seq, byte mask)
 void DoClearDtc(dword seq, byte g0, byte g1, byte g2)
 {
   byte r[4];
+  gReqKind = 2;
   r[0] = 0x14; r[1] = g0; r[2] = g1; r[3] = g2;
   SendRaw(seq, r, 4);
 }
@@ -185,6 +215,7 @@ void DoClearDtc(dword seq, byte g0, byte g1, byte g2)
 void DoSecuritySeed(dword seq, byte level)
 {
   byte r[2];
+  gReqKind = 3;
   r[0] = 0x27; r[1] = level;          // odd level => requestSeed
   SendRaw(seq, r, 2);
 }
@@ -198,9 +229,10 @@ void SecuritySendKey(dword seq, byte oddLevel, byte seed[], dword seedLen)
   dword keyLen, i;
   long  ret;
 
+  gReqKind = 3;
   ret = diagGenerateKeyFromSeed(seed, seedLen, oddLevel, "", 0,
                                 key, elcount(key), keyLen);
-  if (ret != 0) { PublishRsp(seq, 3, gRsp, 0); return; }  // KEYGEN_FAIL
+  if (ret != 0) { PublishRsp(seq, 3, gRsp, 0, gReqKind); return; }  // KEYGEN_FAIL
 
   req[0] = 0x27;
   req[1] = oddLevel + 1;              // sendKey = odd+1 (even)
@@ -244,23 +276,27 @@ on start
   write("FlexDiag TCP listening on %d", kPort);
 }
 
-// On accepted connection, on received data → parse one line → dispatch
+// On accepted connection, send the unsolicited banner immediately:
+//   TcpSendLine(0, "READY proto=1 tool=... transport=A")   // "0 READY ..."
+
+// On received data → parse one line → dispatch
 on TcpReceive
 {
   // read into gRxLine, split on space, switch on VERB:
-  //   HELLO    -> reply "0 READY proto=1 tool=... transport=A"
+  //   HELLO    -> reply "<seq> READY proto=1 tool=... transport=A" (echoes seq;
+  //               the unsolicited "0 READY ..." banner was already sent on accept)
   //   SESSION  -> DoSession(seq, arg)
   //   READDTC  -> DoReadDtc(seq, mask)
-  //   CLEARDTC -> DoClearDtc(seq, g0,g1,g2)
+  //   CLEARDTC -> DoClearDtc(seq, 0xFF,0xFF,0xFF)   // v1: group fixed to FF FF FF (full clear)
   //   SECURITY -> gSecActive=1; gSecSeq=seq; gSecLevel=arg; DoSecuritySeed(seq, arg)
-  //   TP START -> DoTesterPresent(1); reply "<seq> OK TP"
-  //   TP STOP  -> DoTesterPresent(0); reply "<seq> OK TP"
-  //   RAW      -> SendRaw(seq, bytes, len)
+  //   TP START -> DoTesterPresent(1); PublishRsp(seq,2,buf,0,5)   // -> "OK TP"
+  //   TP STOP  -> DoTesterPresent(0); PublishRsp(seq,2,buf,0,6)   // -> "OK TP"
+  //   RAW      -> gReqKind = 0; SendRaw(seq, bytes, len)   // set kind at dispatch, not inside SendRaw
   //   PING     -> reply "<seq> PONG"
 }
 
 /* Implements the core's transport hook. */
-void PublishRsp(dword seq, int status, byte data[], dword len)
+void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 {
   char line[2048];
   // Security continuation: a positive 67 seed -> generate+send key, do not emit yet
@@ -272,7 +308,7 @@ void PublishRsp(dword seq, int status, byte data[], dword len)
     }
     if (data[1] == gSecLevel + 1) {             // unlocked
       gSecActive = 0;
-      TcpSendLine(seq, "OK SEC ...");
+      TcpSendLine(seq, "OK SEC %02X", gSecLevel);  // gSecLevel = odd level requested
       return;
     }
   }
@@ -280,7 +316,9 @@ void PublishRsp(dword seq, int status, byte data[], dword len)
   switch (status) {
     case 0: TcpSendBytesLine(seq, "RSP", data, len); break;
     case 1: TcpSendNrc(seq, data, len); break;      // 7F sid nrc
-    case 2: TcpSendLine(seq, "OK ..."); break;
+    case 2:
+      if (kind == 5 || kind == 6) TcpSendLine(seq, "OK TP");
+      break;
     case 3: TcpSendLine(seq, "ERR 500 keygen_fail"); gSecActive=0; break;
   }
 }
@@ -304,20 +342,22 @@ on sysvar Diag::ReqTrigger
   switch (kind) {
     case 0: // RAW
       len = sysGetVariableData(...Diag::ReqData..., buf);
+      gReqKind = 0;          // set at dispatch, not inside SendRaw (would clobber gReqKind=3
+                              // set by SecuritySendKey() just before its own SendRaw call)
       SendRaw(seq, buf, len);
       break;
     case 1: DoReadDtc(seq, (byte)arg); break;          // arg = mask
-    case 2: DoClearDtc(seq, 0xFF,0xFF,0xFF); break;
+    case 2: DoClearDtc(seq, 0xFF,0xFF,0xFF); break;     // v1: group fixed to FF FF FF (full clear); no other call is sanctioned
     case 3: gSecActive=1; gSecSeq=seq; gSecLevel=(byte)arg;
             DoSecuritySeed(seq,(byte)arg); break;
     case 4: DoSession(seq,(byte)arg); break;
-    case 5: DoTesterPresent(1); PublishRsp(seq,2,buf,0); break;
-    case 6: DoTesterPresent(0); PublishRsp(seq,2,buf,0); break;
+    case 5: DoTesterPresent(1); PublishRsp(seq,2,buf,0,5); break;
+    case 6: DoTesterPresent(0); PublishRsp(seq,2,buf,0,6); break;
   }
 }
 
 /* Implements the core's transport hook by writing response sysvars. */
-void PublishRsp(dword seq, int status, byte data[], dword len)
+void PublishRsp(dword seq, int status, byte data[], dword len, int kind)
 {
   // Security continuation identical to TCP node:
   if (gSecActive && status==0 && len>=2 && data[0]==0x67) {
@@ -327,6 +367,7 @@ void PublishRsp(dword seq, int status, byte data[], dword len)
   sysSetVariableData(...Diag::RspData..., data, len);
   @Diag::RspSeq    = seq;
   @Diag::RspStatus = status;
+  @Diag::RspKind   = kind;
   @Diag::RspTrigger = @Diag::RspTrigger + 1;   // notify bridge
 }
 ```
@@ -351,7 +392,8 @@ class VectorCom:
     """Runs entirely on one STA thread; owns the COM app + sysvars."""
     def __init__(self, prefer="auto"):
         self.cmd_q  = queue.Queue()     # (seq, kind, arg, data) from clients
-        self.evt_q  = queue.Queue()     # (seq, status, data) to clients
+        self.evt_q  = queue.Queue()     # (seq, status, kind, data) to clients
+        self._req_arg = {}              # seq -> arg, for OK SEC <level> formatting (see §4.2)
         self._stop  = threading.Event()
         self.thread = threading.Thread(target=self._run, args=(prefer,), daemon=True)
 
@@ -384,6 +426,7 @@ class VectorCom:
                 sv("ReqSeq").Value  = seq
                 sv("ReqKind").Value = kind
                 sv("ReqArg").Value  = arg
+                self._req_arg[seq] = arg            # for OK SEC <level> formatting (§4.2)
                 sv("ReqTrigger").Value = sv("ReqTrigger").Value + 1
             except queue.Empty:
                 pass
@@ -393,6 +436,7 @@ class VectorCom:
                 last_rsp = cur
                 self.evt_q.put((int(sv("RspSeq").Value),
                                 int(sv("RspStatus").Value),
+                                int(sv("RspKind").Value),
                                 bytes(sv("RspData").Value)))
         pythoncom.CoUninitialize()
 ```
@@ -404,11 +448,14 @@ async def handle(ws, vec):
     async def pump_events():
         loop = asyncio.get_event_loop()
         while True:
-            seq, status, data = await loop.run_in_executor(None, vec.evt_q.get)
-            await ws.send(encode_response(seq, status, data))
+            seq, status, kind, data = await loop.run_in_executor(None, vec.evt_q.get)
+            await ws.send(encode_response(seq, status, kind, data, vec._req_arg.pop(seq, None)))
     asyncio.create_task(pump_events())
     async for line in ws:
         seq, kind, arg, data = parse_command(line)   # maps verbs -> sysvar kinds
+        if kind == HELLO:                            # handled here, never reaches sysvars
+            await ws.send(f"{seq} READY proto=1 tool={vec.tool} transport=B")
+            continue
         vec.cmd_q.put((seq, kind, arg, data))
 ```
 
@@ -417,6 +464,9 @@ async def handle(ws, vec):
 - COM events (`OnVariableChanged`) can replace polling `RspTrigger`; polling with `PumpWaitingMessages` is simpler and robust for v1. Keep the poll interval small (a few ms) for responsiveness.
 - Never call `Dispatch`/sysvar from the asyncio thread — only via `cmd_q`. This satisfies NFR-10.
 - `prefer` lets the operator force `CANoe` or `CANalyzer`; `auto` tries CANoe first.
+- The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for both transports; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
+- Formatting `OK SEC <level>` and `OK TP` is response *formatting*, not diagnostic logic: the bridge reads `(RspStatus, RspKind)` from sysvars plus the `ReqArg` (security level) it itself sent for that `seq`, and renders the literal text. This does not violate "diagnostics live in CAPL, never in COM" (CLAUDE.md §3 rule 4) because no UDS request/response bytes are interpreted — only the non-UDS `OK` line is composed.
+- `encode_response` needs the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`), but that level isn't in the `(seq, status, kind, data)` 4-tuple from `evt_q`. `VectorCom` keeps a small per-seq dict `self._req_arg` populated when the command is sent (`self._req_arg[seq] = arg`); the caller pops `self._req_arg.pop(seq, None)` for the matching `seq` and passes it to `encode_response` to render `<level_hex>`.
 
 ---
 
