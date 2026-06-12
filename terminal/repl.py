@@ -282,11 +282,23 @@ class Repl:
         return resp
 
 
-async def run_repl() -> None:
-    """Run the interactive REPL loop on stdin until ``quit``/EOF."""
+async def run_repl(initial_command: str | None = None) -> None:
+    """Run the interactive REPL loop on stdin until ``quit``/EOF.
+
+    Args:
+        initial_command: If given, run this command (e.g. ``"connect 127.0.0.1
+            9000"`` or ``"connectb 127.0.0.1 8770"``) before handing control to
+            the interactive loop. Used by ``__main__.py`` to implement
+            ``--transport``/``--host``/``--port``/``--url`` (docs/05 §7.1/§7.2).
+    """
     repl = Repl()
     loop = asyncio.get_event_loop()
     print("FlexDiag terminal (proto=1). Type 'connect' to begin, 'quit' to exit.")
+    if initial_command is not None:
+        try:
+            await repl.run_command(initial_command)
+        except TransportError as exc:
+            print(f"transport error: {exc}")
     while True:
         try:
             text = await loop.run_in_executor(None, input, "flexdiag> ")
@@ -301,9 +313,9 @@ async def run_repl() -> None:
     await repl.disconnect()
 
 
-def main() -> None:
+def main(initial_command: str | None = None) -> None:
     logging.basicConfig(level=logging.WARNING)
     try:
-        asyncio.run(run_repl())
+        asyncio.run(run_repl(initial_command))
     except KeyboardInterrupt:
         pass
