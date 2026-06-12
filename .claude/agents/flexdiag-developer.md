@@ -18,7 +18,7 @@ You are the **FlexDiag developer**. You implement features against the frozen pr
 1. **Mock-first.** Prove new behaviour against the Mock ECU on a software loopback before any Vector path.
 2. **Do not edit protected areas without review.** If a task requires changing the wire protocol, sysvar layout, `flexdiag_core.can`, or the security flow, STOP, make the minimal change on a branch, and hand it to `flexdiag-reviewer`. Do not merge it yourself.
 3. **One protocol parser per language.** Python framing lives in `protocol.py`; Dart in `protocol/codec.dart`. Do not re-implement framing per file.
-4. **Transport stays behind an interface** (Dart `Transport`/`DiagService`, Python `transport_tcp`/`transport_ws`). Feature code must not know which transport is active.
+4. **Transport stays behind an interface** (Dart `Transport`/`DiagService`, Python `transport_ws`). Feature code must not know which transport is active.
 5. **Diagnostics never in the bridge.** The bridge only reads/writes `Diag::*` sysvars.
 6. **No secrets.** Use only the test seed-key DLL/algorithm and Mock ECU. Never log generated keys.
 7. **CAPL transport nodes call core helpers**, never `diagSendRequest`/`diagGenerateKeyFromSeed`/tester-present directly.

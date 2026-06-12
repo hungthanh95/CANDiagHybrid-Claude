@@ -122,7 +122,7 @@ Namespace `Diag`. The bridge writes the request and bumps a trigger; CAPL reacts
 
 > Why both `ReqData` and `ReqKind/ReqArg`? `RAW` uses `ReqData` directly. Higher-level verbs (`READDTC`, `SECURITY`, …) use `ReqKind`+`ReqArg` so CAPL runs the multi-step logic (e.g. security seed/key) rather than the bridge pre-building frames. This keeps the seed/key dance and tester-present timing inside the tool.
 
-> `PING`, `BYE`, and `HELLO` are handled entirely by the transport layer (TCP node / Python bridge) and never reach `flexdiag_core.can` or `Diag::Req*`. The `ReqKind` enum (0–6) covers only operations forwarded to the diagnostic core.
+> `PING`, `BYE`, and `HELLO` are handled entirely by the transport layer (Python bridge) and never reach `flexdiag_core.can` or `Diag::Req*`. The `ReqKind` enum (0–6) covers only operations forwarded to the diagnostic core.
 
 > `Diag::ReqData`/`Diag::RspData` are CANoe/CANalyzer System Variables of type **Data** (variable-length byte array, max `kMaxLen`=4095 bytes per §3.1). Via COM, `.Value` reads as a tuple of ints 0–255 (bridge: `bytes(sv('RspData').Value)`); writes accept a sequence of ints 0–255 (bridge: `sv('ReqData').Value = tuple(data)`).
 
@@ -510,7 +510,7 @@ async def handle(ws, vec):
 - COM events (`OnVariableChanged`) can replace polling `RspTrigger`; polling with `PumpWaitingMessages` is simpler and robust for v1. Keep the poll interval small (a few ms) for responsiveness.
 - Never call `Dispatch`/sysvar from the asyncio thread — only via `cmd_q`. This satisfies NFR-10.
 - `prefer` lets the operator force `CANoe` or `CANalyzer`; `auto` tries CANoe first.
-- The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for both transports; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
+- The unsolicited `0 READY proto=1 tool=... transport=B` banner above is sent on connect for Option B; if the client sends `HELLO`, the bridge replies `<seq> READY ...` directly (handled entirely by the bridge, like `PING`/`BYE` — see §2's note on `ReqKind`).
 - Formatting `OK SEC <level>` and `OK TP` is response *formatting*, not diagnostic logic: the bridge reads `(RspStatus, RspKind, RspData)` from the `evt_q` tuple and renders the literal text. This does not violate "diagnostics live in CAPL, never in COM" (CLAUDE.md §3 rule 4) because no UDS request/response bytes are interpreted — only the non-UDS `OK` line is composed.
 - `encode_response` derives the security level for `OK SEC <level_hex>` (when `kind == 3 and status == 2`) directly from `data`: `RspData = 67 <evenLevel>`, so `level = data[1] - 1` (the odd level originally requested via `SECURITY <level>`). This is the same derivation the former `flexdiag_tcp.can` used for Option A (§3.2, removed) -- no per-seq `_req_arg` side-channel is needed.
 

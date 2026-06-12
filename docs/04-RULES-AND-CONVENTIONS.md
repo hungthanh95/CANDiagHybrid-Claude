@@ -115,8 +115,8 @@ The project is built with AI agents under defined roles. The **executable contra
 
 1. **Roles and models** (see `CLAUDE.md` §2 and `.claude/agents/`):
    - **Reviewer** (`flexdiag-reviewer`, Opus) — reviews/approves all changes to the protocol, sysvar layout, `flexdiag_core.can`, the `0x27` flow, and ADRs.
-   - **Developer** (`flexdiag-developer`, Sonnet) — implements bridge, Mock ECU, terminal, Flutter UI, and CAPL transport nodes.
-   - **Tester** (`flexdiag-tester`, Sonnet to author / Haiku to run) — codec unit tests, negative-path tests, regression runs on both transports.
+   - **Developer** (`flexdiag-developer`, Sonnet) — implements bridge, Mock ECU, terminal, Flutter UI, and the CAPL transport node.
+   - **Tester** (`flexdiag-tester`, Sonnet to author / Haiku to run) — codec unit tests, negative-path tests, regression runs on Option B.
    - **Status** (`flexdiag-status`, Haiku) — maintains `docs/STATUS.md`.
 2. **Separation of duty.** The developer role MUST NOT self-approve changes to protected areas (protocol, sysvar layout, `flexdiag_core.can`, security path). The reviewer role approves those before merge.
 3. **Protocol changes are atomic and reviewed** (restates §1): spec doc + transport + both clients + `proto=N` bump, in one PR, with reviewer approval.
