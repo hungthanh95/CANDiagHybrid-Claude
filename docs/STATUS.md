@@ -1,6 +1,6 @@
 # FlexDiag — Project Status
 
-**Maintained by:** `gatekeeper` (Opus) · **Updated:** `2026-06-12` (M5 un-deferred by operator override → In progress: Flutter foundation slice landed — proto=1 codec, DTC/NRC codecs, Option B transport, DiagService — verified on Mock ECU loopback; UI still pending. PR #7: 2-node agents; PR #5: Option A removed; M3 mock-verified, Vector bring-up pending)
+**Maintained by:** `gatekeeper` (Opus) · **Updated:** `2026-06-13` (M5 UI slice landed → still In progress: operator UI for all v1 capabilities — AppState, LoggingTransport, 8 screens, Linux desktop target — 108 widget+unit tests green vs fakes, analyze/format clean; FR-17 ⬜→🟡, a human-gated `flutter run` vs `bridge --fake` remains before ✅. PR #7: 2-node agents; PR #5: Option A removed; M3 mock-verified, Vector bring-up pending)
 
 > Single source of truth for project state. Do not mark anything ✅ without a tester-confirmed result on Option B. Legend: ✅ pass · 🟡 partial · ⬜ not yet · ❌ failing.
 
@@ -15,7 +15,7 @@
 | **M2** Option A live | ❌ **Removed** — Option A parked (R1); operator chose Option B as the sole transport on 2026-06-12. |
 | **M3** Option B live | Terminal ⇄ bridge ⇄ COM/sysvar ⇄ Vector | 🟡 In progress — `flexdiag_sysvar.can` + `bridge/` code-complete (reviewer-approved via commit `b1ba857`), all 5 capabilities verified on mock loopback (109 tests passing after Option A removal), real Vector/COM bring-up ⬜ pending |
 | **M4** Transport switch | ❌ **Removed** — single transport, no runtime switch. |
-| **M5** Flutter parity | Flutter does all 4 capabilities on Option B | 🟡 **In progress** — un-deferred by operator override (2026-06-12), supersedes CLAUDE.md §1a. Foundation slice landed: pure-Dart `flutter_app/` with proto=1 wire codec, DTC/NRC display codecs, `Transport`/`WsTransport` (Option B), and `DiagService`; 76 dart tests + end-to-end smoke vs `bridge --fake` (Mock ECU loopback). UI/state/main.dart + the FR-17 feature set are follow-ups. No CANoe/CANalyzer license → mock loopback is the verification target (same topology as M1/M3) |
+| **M5** Flutter parity | Flutter does all 4 capabilities on Option B | 🟡 **In progress** — un-deferred by operator override (2026-06-12), supersedes CLAUDE.md §1a. Foundation slice (proto=1 codec, DTC/NRC codecs, `Transport`/`WsTransport`, `DiagService`) + **UI slice** now landed: `flutter_app/` is a Flutter app (Linux desktop target) with `AppState` (ChangeNotifier), `LoggingTransport` decorator, and 8 screens (connect/session/read-DTC/clear-DTC/security/tester-present/log) for all v1 capabilities, wired only through `AppState`/`DiagService`/`Transport`. 108 widget+unit tests green vs fakes; `flutter analyze`/`dart format` clean. **Not yet ✅:** a human-gated `flutter run` on Linux desktop against `bridge --fake` / Mock ECU is headless-impossible in CI and remains an operator manual step (RUNBOOK §4). No CANoe/CANalyzer license → mock loopback is the verification target (same topology as M1/M3) |
 | **M6** Release v1 | Hardened, documented, reproducible setup | ⬜ Not started |
 
 ---
@@ -56,7 +56,7 @@ Cells show current verified state. A capability is "done" only when Option B is 
 | FR-14 | Terminal transport switch | ❌ Removed | ❌ |
 | FR-15 | Bridge auto-detect CANoe/CANalyzer | `____` | ⬜ |
 | FR-16 | Reconnection | `test_reconnect` | ⬜ |
-| FR-17 | Flutter feature set | `flutter_app/test/**` (foundation: codec/transport/service) | ⬜ — foundation (codec/transport/DiagService) proven vs Option B / Mock ECU loopback; FR-17 itself stays ⬜ until UI lands |
+| FR-17 | Flutter feature set | `flutter_app/test/ui/**`, `flutter_app/test/state/app_state_test.dart` (+ foundation codec/transport/service) | 🟡 — UI for all v1 capabilities built and wired through DiagService/Transport; 108 widget+unit tests green vs fakes, analyze clean. Stays 🟡 (not ✅) until a human-gated `flutter run` on Linux desktop vs `bridge --fake` / Mock ECU is eyeballed (headless-impossible in CI, RUNBOOK §4) |
 | FR-18 | Terminal feature set | `test_flex_capabilities_b` | ✅ |
 | FR-20 | Mock ECU responds to core SIDs | `test_mock_uds` | ✅ |
 | FR-22 | Mock seed/key matches DLL | `test_mock_uds::test_security_*` | ✅ |
@@ -72,6 +72,7 @@ Cells show current verified state. A capability is "done" only when Option B is 
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-13 | PR #10 / `c399fbe` + `4bcd795` | feat(flutter): M5 UI slice — `flutter_app/` converted to a Flutter app (flutter SDK dep, flutter_lints, Linux desktop scaffold under `linux/`); `AppState` (ChangeNotifier: connection lifecycle, log, per-capability last result, ReadyInfo, SecurityResult Success/Nrc/Err); `LoggingTransport` Transport decorator (DiagService unmodified); 8 screens (connect/session/read-DTC/clear-DTC/security/tester-present/home/log) depending only on AppState/DiagService/Transport; docs/03 §7 layout updated; separate `style(flutter)` commit reconciles dart-format tall-style whitespace on 7 foundation files (no logic). 108 flutter tests + analyze + format clean; no protocol/** or §1/§2 change; no protected areas; FR-17 ⬜→🟡 | software loopback (fakes / Mock ECU semantics) | n.a. (no Vector license) |
 | 2026-06-12 | `1029905` | feat(flutter): M5 foundation slice (operator un-deferred M5) — new pure-Dart `flutter_app/`: proto=1 wire codec (`protocol/codec.dart`, mirrors `wire.py`), DTC decode (`codec/dtc.dart`, byte-mirrors `protocol/dtc.py`) + NRC name table (`codec/nrc.dart`), `Transport`/`WsTransport` (Option B, web_socket_channel), `DiagService` (readDtc/clearDtc/session/securityUnlock/testerPresent/raw/ping, NrcException≠ErrException); 76 dart tests + end-to-end smoke vs `bridge --fake`; dart format + analyze clean; docs/03 §7 updated; no protocol/** or §1/§2 changes; no protected areas | software loopback | n.a. (no Vector license) |
 | 2026-06-12 | PR #7 / a3157b5 | chore(meta)!: consolidate 5-agent setup (`flexdiag-developer`/`-tester`/`-reviewer`/`-shipper`/`-status`) into 2 nodes — `builder` (Sonnet, impl+tests in TDD loop) and `gatekeeper` (Opus, review+commit+PR+merge+STATUS.md); CLAUDE.md §2/§3.3/§4/§6 rewritten; separation of duties preserved at builder↔gatekeeper boundary; no product-code or behaviour change | n.a. | n.a. |
 | 2026-06-12 | PR #5 / 3e1588a | chore!: remove Option A (CAPL TCP node, terminal TCP transport, MockServer, mock_ecu CLI, 5 .flex scripts, 3 test modules; 12 files deleted); operator decision: CAPL TCP/IP API license uncertainty → Option B sole transport; 129→109 tests; protocol/wire `READY` field retained as always-`"B"` (proto=1 unchanged); `flexdiag_core.can` + 0x27 security untouched; M2/M4 marked Removed (numbers preserved); R1 closed; FR-10/12/13/14 marked Removed; reviewer-approved | software loopback | n.a. |
@@ -107,3 +108,4 @@ Cells show current verified state. A capability is "done" only when Option B is 
 - [x] **Prioritize M3:** write `flexdiag_sysvar.can` + Python `bridge/` (Option B) → **M3 code-complete + mock verified**.
 - [x] Remove Option A (CAPL TCP transport, MockServer, mock_ecu CLI, terminal TCP transport) per operator decision (R1 closed).
 - [ ] Run M3 Vector/COM bring-up checklist (docs/05 §8) once an operator can drive `pywin32` / CANoe/CANalyzer.
+- [ ] **M5 operator manual step:** `flutter run` the Linux desktop app against `bridge --fake` / Mock ECU and eyeball all v1 capability screens (RUNBOOK §4). Headless-impossible in CI; required before FR-17 → ✅.
