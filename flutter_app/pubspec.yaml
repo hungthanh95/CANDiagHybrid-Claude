@@ -1,21 +1,28 @@
 name: flexdiag_app
 description: >
-  FlexDiag operator client (proto=1, Option B). Foundation slice: transport
-  interface, wire-protocol codec, DTC/NRC display codecs, and DiagService.
-  Pure-Dart package for now (no `flutter:` dependency) so `dart test` covers
-  codec/transport/service logic without the full Flutter SDK -- see
-  docs/03-TECHNICAL-DETAIL.md §7 and the M5 handoff NOTES for the SDK
-  footprint decision. UI/state/main.dart land in a follow-up task that may
-  add the `flutter:` SDK constraint and `flutter` dependency.
+  FlexDiag operator client (proto=1, Option B). Flutter app: transport
+  interface, wire-protocol codec, DTC/NRC display codecs, DiagService, app
+  state, and UI screens (connect, session, read-DTC, clear-DTC, security,
+  tester-present, log). See docs/03-TECHNICAL-DETAIL.md §7 for the package
+  layout and the M5 handoff NOTES for the SDK footprint decision.
+  Linux desktop is the primary buildable target (`WsTransport` uses
+  `dart:io`, not web-compatible).
 version: 0.1.0
 publish_to: "none"
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ^3.12.2
 
 dependencies:
+  flutter:
+    sdk: flutter
   web_socket_channel: ^2.4.0
 
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   test: ^1.25.0
-  lints: ^4.0.0
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

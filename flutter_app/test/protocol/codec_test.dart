@@ -16,8 +16,11 @@ void main() {
 
     test('hexToBytes round trip', () {
       expect(hexToBytes(bytesToHex(<int>[])), <int>[]);
-      expect(hexToBytes(bytesToHex(<int>[0x22, 0xF1, 0x90])),
-          <int>[0x22, 0xF1, 0x90]);
+      expect(hexToBytes(bytesToHex(<int>[0x22, 0xF1, 0x90])), <int>[
+        0x22,
+        0xF1,
+        0x90,
+      ]);
     });
 
     test('hexToBytes empty and whitespace', () {
@@ -124,7 +127,7 @@ void main() {
         0x00,
         0x56,
         0x78,
-        0x08
+        0x08,
       ]);
     });
 
@@ -221,8 +224,10 @@ void main() {
     });
 
     test('READY missing field throws', () {
-      expect(() => parseResponse('0 READY proto=1 tool=CANoe'),
-          throwsFormatException);
+      expect(
+        () => parseResponse('0 READY proto=1 tool=CANoe'),
+        throwsFormatException,
+      );
     });
   });
 }

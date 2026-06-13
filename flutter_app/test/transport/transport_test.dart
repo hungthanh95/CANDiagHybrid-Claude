@@ -46,8 +46,10 @@ void main() {
     });
 
     test('connects, receives banner, sends and receives lines', () async {
-      final Transport transport =
-          WsTransport(host: '127.0.0.1', port: server.port);
+      final Transport transport = WsTransport(
+        host: '127.0.0.1',
+        port: server.port,
+      );
       await transport.connect();
 
       final lines = <String>[];
@@ -78,21 +80,29 @@ void main() {
       await transport.connect();
       await transport.dispose();
       await expectLater(
-          transport.send('1 PING'), throwsA(isA<TransportException>()));
+        transport.send('1 PING'),
+        throwsA(isA<TransportException>()),
+      );
     });
 
     test('send before connect throws TransportException', () async {
       final transport = WsTransport(host: '127.0.0.1', port: server.port);
       await expectLater(
-          transport.send('1 PING'), throwsA(isA<TransportException>()));
+        transport.send('1 PING'),
+        throwsA(isA<TransportException>()),
+      );
     });
 
-    test('connect failure (nothing listening) throws TransportException',
-        () async {
-      final transport = WsTransport(host: '127.0.0.1', port: 1);
-      await expectLater(
-          transport.connect(), throwsA(isA<TransportException>()));
-    });
+    test(
+      'connect failure (nothing listening) throws TransportException',
+      () async {
+        final transport = WsTransport(host: '127.0.0.1', port: 1);
+        await expectLater(
+          transport.connect(),
+          throwsA(isA<TransportException>()),
+        );
+      },
+    );
 
     test('peer-closed connection ends the lines stream', () async {
       final transport = WsTransport(host: '127.0.0.1', port: server.port);

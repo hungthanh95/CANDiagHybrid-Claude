@@ -60,7 +60,9 @@ void main() {
 
     test('throws on too-short payload', () {
       expect(
-          () => parseReadDtcPayload(<int>[0x59, 0x02]), throwsFormatException);
+        () => parseReadDtcPayload(<int>[0x59, 0x02]),
+        throwsFormatException,
+      );
     });
 
     test('throws on wrong SID/sub-function', () {
