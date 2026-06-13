@@ -19,15 +19,23 @@ class LoggingTransport implements Transport {
 
   final Transport _inner;
   final void Function(LogDirection direction, String line) _onLine;
+  Stream<String>? _lines;
 
   @override
   bool get isClosed => _inner.isClosed;
 
+  /// The logged, re-broadcast line stream.
+  ///
+  /// Cached and converted via [Stream.asBroadcastStream] so the
+  /// [LogDirection.recv] side effect in [_onLine] fires exactly once per
+  /// line even when [lines] has multiple listeners (e.g. [DiagService]'s
+  /// response correlation and [AppState]'s drop-detection subscription,
+  /// FR-16).
   @override
-  Stream<String> get lines => _inner.lines.map((line) {
+  Stream<String> get lines => _lines ??= _inner.lines.map((line) {
     _onLine(LogDirection.recv, line);
     return line;
-  });
+  }).asBroadcastStream();
 
   @override
   Future<void> connect() => _inner.connect();

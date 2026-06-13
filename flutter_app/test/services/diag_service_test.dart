@@ -7,6 +7,7 @@
 
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flexdiag_app/services/diag_service.dart';
 import 'package:flexdiag_app/transport/transport.dart';
 import 'package:test/test.dart';
@@ -305,5 +306,87 @@ void main() {
         await future;
       },
     );
+  });
+
+  group('per-request timeout (FR-16/NFR-5)', () {
+    test(
+      'no response within requestTimeout -> TransportException, not a hang',
+      () {
+        fakeAsync((async) {
+          final timeoutTransport = FakeTransport();
+          final timeoutService = DiagService(
+            timeoutTransport,
+            requestTimeout: const Duration(seconds: 5),
+          );
+          unawaited(timeoutTransport.connect());
+          timeoutService.start();
+
+          Object? error;
+          unawaited(
+            timeoutService.ping().then(
+              (_) {},
+              onError: (Object e) => error = e,
+            ),
+          );
+
+          // Server never responds. Advance past the timeout.
+          async.elapse(const Duration(seconds: 5));
+
+          expect(error, isA<TransportException>());
+          // Distinct from an ECU NRC or a protocol ERR (NRC ≠ ERR ≠
+          // transport).
+          expect(error, isNot(isA<NrcException>()));
+          expect(error, isNot(isA<ErrException>()));
+        });
+      },
+    );
+
+    test('response arriving before the timeout still resolves normally', () {
+      fakeAsync((async) {
+        final timeoutTransport = FakeTransport();
+        final timeoutService = DiagService(
+          timeoutTransport,
+          requestTimeout: const Duration(seconds: 5),
+        );
+        unawaited(timeoutTransport.connect());
+        timeoutService.start();
+
+        Object? result;
+        unawaited(
+          timeoutService.ping().then(
+            (_) => result = 'pong',
+            onError: (Object e) => result = e,
+          ),
+        );
+
+        async.elapse(const Duration(seconds: 1));
+        final seq = timeoutTransport.lastSeq();
+        timeoutTransport.pushLine('$seq PONG');
+        async.flushMicrotasks();
+
+        expect(result, 'pong');
+      });
+    });
+
+    test('configurable timeout: a shorter duration fires sooner', () {
+      fakeAsync((async) {
+        final timeoutTransport = FakeTransport();
+        final timeoutService = DiagService(
+          timeoutTransport,
+          requestTimeout: const Duration(milliseconds: 100),
+        );
+        unawaited(timeoutTransport.connect());
+        timeoutService.start();
+
+        Object? error;
+        unawaited(
+          timeoutService.ping().then((_) {}, onError: (Object e) => error = e),
+        );
+
+        async.elapse(const Duration(milliseconds: 100));
+
+        expect(error, isA<TransportException>());
+      });
+    });
   });
 }

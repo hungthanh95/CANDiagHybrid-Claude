@@ -34,14 +34,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
     super.dispose();
   }
 
-  String _statusLabel(ConnectionStatus status) {
-    switch (status) {
+  String _statusLabel(AppState state) {
+    switch (state.status) {
       case ConnectionStatus.disconnected:
         return 'Disconnected';
       case ConnectionStatus.connecting:
         return 'Connecting';
       case ConnectionStatus.connected:
         return 'Connected';
+      case ConnectionStatus.reconnecting:
+        return 'Reconnecting (attempt ${state.reconnectAttempt})';
       case ConnectionStatus.error:
         return 'Error';
     }
@@ -55,6 +57,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
         return Colors.orange;
       case ConnectionStatus.connected:
         return Colors.green;
+      case ConnectionStatus.reconnecting:
+        return Colors.orange;
       case ConnectionStatus.error:
         return Colors.red;
     }
@@ -65,7 +69,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final state = widget.appState;
     final connected =
         state.status == ConnectionStatus.connected ||
-        state.status == ConnectionStatus.connecting;
+        state.status == ConnectionStatus.connecting ||
+        state.status == ConnectionStatus.reconnecting;
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -73,7 +78,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Status: ${_statusLabel(state.status)}',
+            'Status: ${_statusLabel(state)}',
             style: TextStyle(
               color: _statusColor(state.status),
               fontWeight: FontWeight.bold,
@@ -93,8 +98,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             decoration: const InputDecoration(labelText: 'Port'),
           ),
           const SizedBox(height: 16),
-          if (state.status == ConnectionStatus.connected ||
-              state.status == ConnectionStatus.connecting)
+          if (connected)
             ElevatedButton(
               onPressed: () => state.disconnect(),
               child: const Text('Disconnect'),

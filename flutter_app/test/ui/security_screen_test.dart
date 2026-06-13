@@ -63,6 +63,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('NRC 27 35'), findsOneWidget);
+    // The human-readable NRC name is shown alongside the hex code (mirrors
+    // the terminal client's render()).
+    expect(find.textContaining('NRC 27 35 (invalidKey)'), findsOneWidget);
     // Must not render as a generic/ERR-styled message.
     expect(find.textContaining('ERR'), findsNothing);
 

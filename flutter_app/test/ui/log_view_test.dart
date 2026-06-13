@@ -66,7 +66,9 @@ void main() {
     await future2;
     await tester.pumpAndSettle();
 
-    final nrcText = tester.widget<Text>(find.text('! NRC 14 22'));
+    final nrcText = tester.widget<Text>(
+      find.text('! NRC 14 22 (conditionsNotCorrect)'),
+    );
     final errText = tester.widget<Text>(find.text('! ERR 422 bad_args'));
 
     expect(nrcText.style?.color, isNotNull);
