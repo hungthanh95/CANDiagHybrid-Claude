@@ -1,6 +1,6 @@
 # FlexDiag — Project Status
 
-**Maintained by:** `gatekeeper` (Opus) · **Updated:** `2026-06-13` (M6 client-resilience slice landed → **M6 In progress, NOT Done**: bounded auto-reconnect (FR-16) on terminal + Flutter, Flutter per-request timeout (NFR-5), NRC-name display — verified vs Mock ECU / Flutter FakeAsync only; FR-16 ⬜→✅. Two M6 DoD items remain human-gated and were NOT attempted: both-tools CANoe+CANalyzer cross-check (CLAUDE.md §3.6) and fresh-machine docs/05 repro (RUNBOOK §4). Earlier: M5 UI slice In progress (FR-17 🟡); PR #7: 2-node agents; PR #5: Option A removed; M3 mock-verified, Vector bring-up pending)
+**Maintained by:** `gatekeeper` (Opus) · **Updated:** `2026-06-13` (§3 traceability-accuracy correction — no code change: recorded existing-test coverage for FR-1/3/4/5/6, added rows FR-19/21/24 (✅ mock) + FR-25/26/NFR-7/NFR-10 (🟡 implemented, not formally tested); §3 ✅-convention note added; §2 capability matrix unchanged. Earlier same day: M6 client-resilience slice landed → **M6 In progress, NOT Done**: bounded auto-reconnect (FR-16) on terminal + Flutter, Flutter per-request timeout (NFR-5), NRC-name display — verified vs Mock ECU / Flutter FakeAsync only; FR-16 ⬜→✅. Two M6 DoD items remain human-gated and were NOT attempted: both-tools CANoe+CANalyzer cross-check (CLAUDE.md §3.6) and fresh-machine docs/05 repro (RUNBOOK §4). Earlier: M5 UI slice In progress (FR-17 🟡); PR #7: 2-node agents; PR #5: Option A removed; M3 mock-verified, Vector bring-up pending)
 
 > Single source of truth for project state. Do not mark anything ✅ without a tester-confirmed result on Option B. Legend: ✅ pass · 🟡 partial · ⬜ not yet · ❌ failing.
 
@@ -38,14 +38,16 @@ Cells show current verified state. A capability is "done" only when Option B is 
 
 ## 3. Requirement traceability (FR → test → state)
 
+> **State convention (§3 only):** ✅ = **verified on the software/mock loopback** (`bridge --fake` / `FakeVectorCom` / Mock ECU semantics). Real-COM / Vector (CANoe, CANalyzer) verification is tracked **separately** in the §2 capability matrix (those columns stay ⬜ until Vector hardware runs). This is the same convention FR-7/FR-18 have always used. 🟡 = implemented but not formally tested (evidence pointer to code, no asserting test). ⬜ = no test yet.
+
 | FR | Requirement (short) | Covering test(s) | State |
 |----|---------------------|------------------|-------|
-| FR-1 | Read DTC `19 02` | `____` | ⬜ |
+| FR-1 | Read DTC `19 02` | `test_flex_capabilities_b::test_cap_readdtc_b`, `test_mock_uds` (`19 02` resp) | ✅ (mock loopback) |
 | FR-2 | Client-side DTC decode | `test_protocol_dtc` | ✅ |
-| FR-3 | Clear DTC `14` | `____` | ⬜ |
-| FR-4 | Periodic Tester Present | `____` | ⬜ |
-| FR-5 | Security seed/key | `____` | ⬜ |
-| FR-6 | Session control | `____` | ⬜ |
+| FR-3 | Clear DTC `14` | `test_flex_capabilities_b::test_cap_clear_dtc_b`, `test_mock_uds` (`0x14`→`0x54`) | ✅ (mock loopback) |
+| FR-4 | Periodic Tester Present | `test_flex_capabilities_b::test_cap_tester_present_b` | ✅ (mock loopback) — covers client/bridge TP START/STOP → OK TP round-trip; the *periodic* `3E 80` emission is the Vector tool's job, fully verifiable only on real Vector (§2) |
+| FR-5 | Security seed/key | `test_flex_capabilities_b::test_cap_security_b`, `test_mock_uds::test_security_*`, `test_bridge_negatives` (invalidKey/accessDenied) | ✅ (mock loopback) |
+| FR-6 | Session control | `test_flex_capabilities_b::test_cap_session_b`, `test_mock_uds` | ✅ (mock loopback) |
 | FR-7 | Raw request | `test_flex_capabilities_b` | ✅ |
 | FR-8 | NRC surfaced distinctly | `test_bridge_negatives`, `test_protocol_nrc` | ✅ |
 | FR-9 | `0x78` pending handled | `test_bridge_negatives::test_pending_0x78_then_final` | ✅ |
@@ -58,14 +60,23 @@ Cells show current verified state. A capability is "done" only when Option B is 
 | FR-16 | Reconnection | `tests/test_terminal_reconnect.py` (terminal, 4), `flutter_app/test/state/app_state_reconnect_test.dart` (Flutter, 4) | ✅ — bounded exponential-backoff auto-reconnect both clients; in-flight requests fail immediately, exhaustion stays cleanly disconnected (no hang). Mock loopback / FakeAsync verified |
 | FR-17 | Flutter feature set | `flutter_app/test/ui/**`, `flutter_app/test/state/app_state_test.dart` (+ foundation codec/transport/service) | 🟡 — UI for all v1 capabilities built and wired through DiagService/Transport; 108 widget+unit tests green vs fakes, analyze clean. Stays 🟡 (not ✅) until a human-gated `flutter run` on Linux desktop vs `bridge --fake` / Mock ECU is eyeballed (headless-impossible in CI, RUNBOOK §4) |
 | FR-18 | Terminal feature set | `test_flex_capabilities_b` | ✅ |
+| FR-19 | Terminal script-file runner | `test_flex_capabilities_b` (all `cap_*_b` run via `terminal/script.py` `.flex` runner against the bridge) | ✅ (mock loopback) |
 | FR-20 | Mock ECU responds to core SIDs | `test_mock_uds` | ✅ |
+| FR-21 | Mock ECU configurable DTC table | `test_mock_uds` (`Ecu.dtcs: list[tuple[int,int]]` dataclass field, read back by `0x19 02`) | ✅ |
 | FR-22 | Mock seed/key matches DLL | `test_mock_uds::test_security_*` | ✅ |
 | FR-23 | Mock NRC injection | `test_mock_uds::test_inject_next_nrc`, `test_server_negatives`, `test_bridge_negatives` | ✅ |
+| FR-24 | Software `--fake` loopback mode | `test_bridge_unit`, `test_flex_capabilities_b` (`FakeVectorCom` wrapping `mock_ecu.uds.Ecu`; the loopback nearly every bridge/capability test runs on) | ✅ |
+| FR-25 | Logging at each layer | bridge Python `logging`; terminal `trace on` (`repl.py`); Flutter `LoggingTransport` (`app_state.dart`) | 🟡 implemented, no dedicated test asserting timestamp+direction+seq at each layer |
+| FR-26 | End-to-end seq-id traceability | SEQ generated client-side, echoed on responses, threaded through bridge/sysvars (docs/03 §1.5) | 🟡 implemented (seq echoed through protocol), no dedicated trace-by-seq test |
 
 | NFR-4 | Byte-accurate encode/decode | `test_bridge_unit` | 🟡 |
 | NFR-5 | No hang/crash on transport loss or no-response | `tests/test_terminal_reconnect.py` (per-request-timeout, bounded-exhaust-clean), `flutter_app/test/services/diag_service_test.dart` (3 FakeAsync timeout) | ✅ — mock/FakeAsync verified |
+| NFR-7 | Localhost bind default | `bridge/flexdiag_bridge.py` + `bridge/__main__.py` default `host="127.0.0.1"`; remote bind is explicit `--host` | 🟡 implemented in code, no asserting test |
+| NFR-10 | COM serialized on single STA thread | `VectorCom` runs COM on one dedicated STA thread (`CoInitialize`/`PumpWaitingMessages`); async side talks only via queues (docs/03 §4.2) | 🟡 architectural (by construction), not unit-testable / real-COM-unverifiable offline |
+| NFR-3 | Latency | — | ⬜ no test yet (perf deferred this pass) |
+| NFR-9 | Throughput | — | ⬜ no test yet (perf deferred this pass) |
 
-> Add NFR rows (latency NFR-3, COM serialization NFR-10) as they get coverage. NFR-4 verified on mock (Option B loopback); real Vector/COM pending.
+> §3 ✅ = software/mock-loopback verified; real Vector/COM tracked separately in §2 (those columns stay ⬜ until hardware runs). NFR-4 verified on mock (Option B loopback); real Vector/COM pending. NFR-3/NFR-9 (perf) deferred by operator — no coverage claimed.
 
 ---
 
@@ -73,6 +84,7 @@ Cells show current verified state. A capability is "done" only when Option B is 
 
 | Date | PR / commit | Change | Topology | Tool |
 |------|-------------|--------|----------|------|
+| 2026-06-13 | `docs(status)` (this change) | **Traceability-accuracy correction, no code change.** §3 was under-reporting verified coverage: filled in FR-1/3/4/5/6 (were `____`/⬜ → ✅ mock loopback, backed by existing passing `test_flex_capabilities_b` cap tests + `test_mock_uds`); added rows FR-19/21/24 (✅ mock, existing tests), FR-25/26 + NFR-7/NFR-10 (🟡 implemented-not-formally-tested, code pointers), NFR-3/NFR-9 (⬜ perf deferred). Added §3 ✅-convention note (✅ = mock-loopback; real Vector tracked in §2) to prevent recurrence. §2 capability matrix untouched. Verified by full `pytest -q` (113 passed) + spot-check of named test functions before marking ✅ | software loopback (Mock ECU) | n.a. (doc-only) |
 | 2026-06-13 | `6dca2dc` + `663426c` | M6 client-resilience slice — bounded exponential-backoff auto-reconnect (FR-16) for terminal (`repl.py` `ReconnectPolicy`) + Flutter (`AppState._reconnectLoop` + `transport/reconnect_policy.dart`); in-flight requests fail immediately with `TransportError`/`TransportException` on drop; Flutter `DiagService` per-request timeout (5s → `TransportException`, NFR-5); NRC-name display wired into `security_screen` + `AppState` log (`NRC <sid> <nrc> (<name>)`, display-only); contained `fix(flutter)` caches `LoggingTransport` broadcast stream (fixes double-logging). proto=1 / docs/03 §1/§2 / `flexdiag_core.can` / 0x27 path all untouched; docs/03 §7.1/§8.1 added. Python 113 + Flutter 115 tests green; ruff/black/analyze/format clean. FR-16 ⬜→✅, NFR-5 ✅. M6 stays In progress (human-gated both-tools + fresh-machine repro NOT attempted) | software loopback (Mock ECU) / Flutter FakeAsync | n.a. (no Vector license) |
 | 2026-06-13 | PR #10 / `c399fbe` + `4bcd795` | feat(flutter): M5 UI slice — `flutter_app/` converted to a Flutter app (flutter SDK dep, flutter_lints, Linux desktop scaffold under `linux/`); `AppState` (ChangeNotifier: connection lifecycle, log, per-capability last result, ReadyInfo, SecurityResult Success/Nrc/Err); `LoggingTransport` Transport decorator (DiagService unmodified); 8 screens (connect/session/read-DTC/clear-DTC/security/tester-present/home/log) depending only on AppState/DiagService/Transport; docs/03 §7 layout updated; separate `style(flutter)` commit reconciles dart-format tall-style whitespace on 7 foundation files (no logic). 108 flutter tests + analyze + format clean; no protocol/** or §1/§2 change; no protected areas; FR-17 ⬜→🟡 | software loopback (fakes / Mock ECU semantics) | n.a. (no Vector license) |
 | 2026-06-12 | `1029905` | feat(flutter): M5 foundation slice (operator un-deferred M5) — new pure-Dart `flutter_app/`: proto=1 wire codec (`protocol/codec.dart`, mirrors `wire.py`), DTC decode (`codec/dtc.dart`, byte-mirrors `protocol/dtc.py`) + NRC name table (`codec/nrc.dart`), `Transport`/`WsTransport` (Option B, web_socket_channel), `DiagService` (readDtc/clearDtc/session/securityUnlock/testerPresent/raw/ping, NrcException≠ErrException); 76 dart tests + end-to-end smoke vs `bridge --fake`; dart format + analyze clean; docs/03 §7 updated; no protocol/** or §1/§2 changes; no protected areas | software loopback | n.a. (no Vector license) |
