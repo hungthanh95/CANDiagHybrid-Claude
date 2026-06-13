@@ -661,6 +661,20 @@ As of the M5 UI slice, `flutter_app` is a Flutter app package (`flutter:` SDK de
 
 All of the above throw `NrcException` (ECU negative response, `NRC <sid> <nrc>` -- distinct from `ErrException` per the "NRC ≠ ERR" rule), `ErrException` (protocol/tool error, `ERR <code> <text>`; codes per §1.5's closed set), or `TransportException` (connection drop/timeout) on failure. Screens depend on `DiagService` and the `Transport` interface, never on the concrete `WsTransport`, per `docs/04` §4 rule 1.
 
+`DiagService` enforces a **per-request timeout** (default 5s, configurable via the `requestTimeout` constructor parameter, matching the terminal's `transport_ws.py` default). If no response line for a given `seq` arrives within the timeout, the pending call completes with a `TransportException` -- never `NrcException`/`ErrException` ("NRC ≠ ERR ≠ transport", CLAUDE.md rule 10).
+
+`NrcException`'s `nrc` is rendered with its symbolic name via `codec/nrc.dart`'s `nrcName()`, e.g. `NRC 27 35 (invalidKey)`, in both the `security_screen.dart` unlock result and `AppState`'s running log -- display only, the underlying `sid`/`nrc` values are unchanged.
+
+### 7.1 Bounded auto-reconnect (FR-16, NFR-5)
+
+`AppState` owns connection-lifecycle and reconnection state so screens never talk to `WsTransport` directly:
+
+- `ConnectionStatus` gains a `reconnecting` value (distinct from the initial, user-initiated `connecting`), plus `AppState.reconnectAttempt` (1-based attempt currently in flight, `0` otherwise) for the connect screen's "Reconnecting (attempt N)" label.
+- `flutter_app/lib/transport/reconnect_policy.dart` defines `ReconnectPolicy({maxAttempts = 5, baseDelay = 500ms, maxDelay = 10s})`. `delayFor(attempt)` returns `baseDelay * 2^attempt`, capped at `maxDelay`. `maxAttempts = 0` disables auto-reconnect entirely.
+- On an unexpected transport drop (peer close / I/O error, detected via the `Transport.lines` stream ending or erroring): any in-flight `DiagService` calls fail **immediately** with `TransportException` (via `DiagService.dispose()`), `status` becomes `reconnecting`, and a bounded backoff loop (`AppState._reconnectLoop`) retries `connect()` to the same host/port. On success, `status` returns to `connected` and an info log entry "reconnected to host:port" is appended. If all `maxAttempts` are exhausted, `status` becomes `error`, an info log entry "...exhausted after N attempts; staying disconnected" is appended, and the app stays cleanly disconnected (no hang/crash).
+- `AppState.disconnect()` is idempotent and cancels any in-progress reconnect loop cleanly (the loop observes the cleared host/port and returns without reconnecting).
+- The reconnect delay is injectable (`AppState`'s `delay` constructor parameter, default `Future.delayed`) so tests drive the loop deterministically via `package:fake_async`.
+
 ---
 
 ## 8. Python terminal client (shape)
@@ -674,6 +688,16 @@ terminal/
 ```
 
 REPL commands map 1:1 to protocol verbs plus conveniences (`connectb`, `trace on`). It is the reference client: if a capability works here against the Mock ECU, the Flutter UI only needs UI work.
+
+### 8.1 Bounded auto-reconnect (FR-16, NFR-5)
+
+`repl.py` defines a `ReconnectPolicy(max_attempts=5, base_delay=0.5, max_delay=10.0)` dataclass; `delay_for(attempt)` returns `min(base_delay * 2**attempt, max_delay)`. `max_attempts = 0` disables auto-reconnect.
+
+On an unexpected transport drop (the read loop's connection ends), `Repl`:
+
+- Fails any pending requests immediately with a transport error (via `_fail_pending`), rather than waiting for the per-request timeout.
+- If `max_attempts > 0`, retries `connect()` to the last-used host/port with the policy's backoff delays (`_try_reconnect`). On success, the new transport/reader task is installed and normal operation resumes. If all attempts are exhausted, the terminal logs a clear error and stays disconnected (`self.transport = None`) -- no hang/crash.
+- `disconnect` clears the remembered host/port, so a subsequent drop notification (if any) does not trigger reconnection.
 
 ---
 

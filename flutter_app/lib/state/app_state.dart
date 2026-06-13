@@ -12,8 +12,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../codec/dtc.dart';
+import '../codec/nrc.dart';
 import '../protocol/codec.dart';
 import '../services/diag_service.dart';
+import '../transport/reconnect_policy.dart';
 import '../transport/transport.dart';
 import '../transport/ws_transport.dart';
 import 'log_entry.dart';
@@ -35,7 +37,19 @@ class ReadyInfo {
 }
 
 /// Connection lifecycle status.
-enum ConnectionStatus { disconnected, connecting, connected, error }
+///
+/// [reconnecting] is entered when a previously-[connected] transport drops
+/// and the app is attempting bounded auto-reconnection (FR-16). It is
+/// distinct from [connecting] (the initial, user-initiated connect) so the
+/// connect screen can show "Reconnecting (attempt N/M)" rather than the
+/// initial-connect spinner.
+enum ConnectionStatus {
+  disconnected,
+  connecting,
+  connected,
+  reconnecting,
+  error,
+}
 
 /// Result of the last [AppState.securityUnlock] call.
 ///
@@ -79,16 +93,33 @@ typedef TransportFactory = Transport Function(String host, int port);
 /// must depend only on this class (and the `Transport`/`DiagService`
 /// interfaces it exposes) -- never construct `WsTransport` themselves.
 class AppState extends ChangeNotifier {
-  AppState({TransportFactory? transportFactory})
-    : _transportFactory =
-          transportFactory ??
-          ((host, port) => WsTransport(host: host, port: port));
+  /// [reconnectPolicy] bounds auto-reconnect attempts after a transport drop
+  /// (FR-16). [delay] is the (injectable) backoff sleep -- tests can supply
+  /// a fake to drive the reconnect loop deterministically without real
+  /// timers/sockets (e.g. via `package:fake_async`).
+  AppState({
+    TransportFactory? transportFactory,
+    ReconnectPolicy? reconnectPolicy,
+    Future<void> Function(Duration)? delay,
+  }) : _transportFactory =
+           transportFactory ??
+           ((host, port) => WsTransport(host: host, port: port)),
+       _reconnectPolicy = reconnectPolicy ?? const ReconnectPolicy(),
+       _delay = delay ?? Future.delayed;
 
   final TransportFactory _transportFactory;
+  final ReconnectPolicy _reconnectPolicy;
+  final Future<void> Function(Duration) _delay;
 
   Transport? _transport;
   DiagService? _diagService;
   ConnectionStatus _status = ConnectionStatus.disconnected;
+  StreamSubscription<String>? _dropSub;
+
+  String? _host;
+  int? _port;
+  bool _reconnecting = false;
+  int _reconnectAttempt = 0;
 
   final List<LogEntry> _log = <LogEntry>[];
 
@@ -101,6 +132,10 @@ class AppState extends ChangeNotifier {
 
   /// Current connection status.
   ConnectionStatus get status => _status;
+
+  /// The 1-based reconnect attempt currently in progress, or `0` if not
+  /// reconnecting. Valid only while [status] is [ConnectionStatus.reconnecting].
+  int get reconnectAttempt => _reconnectAttempt;
 
   /// The active [DiagService], or `null` if not connected. Screens use this
   /// to issue requests.
@@ -164,12 +199,14 @@ class AppState extends ChangeNotifier {
   /// On success, [status] becomes [ConnectionStatus.connected] and
   /// [diagService] is non-null. On failure, [status] becomes
   /// [ConnectionStatus.error] and [diagService] stays `null`.
+  ///
+  /// Remembers [host]/[port] so that a later transport drop can trigger
+  /// bounded auto-reconnection (FR-16) to the same address.
   Future<void> connect(String host, int port) async {
     _status = ConnectionStatus.connecting;
     notifyListeners();
 
-    final transport = _transportFactory(host, port);
-    final logging = LoggingTransport(transport, _appendLog);
+    final logging = _buildTransport(host, port);
     try {
       await logging.connect();
     } catch (e) {
@@ -178,25 +215,58 @@ class AppState extends ChangeNotifier {
       return;
     }
 
+    _installConnection(logging);
+    _host = host;
+    _port = port;
+    _status = ConnectionStatus.connected;
+    _appendLog(LogDirection.info, 'connected to $host:$port');
+  }
+
+  /// Wraps a freshly-created transport for [host]:[port] in a
+  /// [LoggingTransport].
+  LoggingTransport _buildTransport(String host, int port) {
+    final transport = _transportFactory(host, port);
+    return LoggingTransport(transport, _appendLog);
+  }
+
+  /// Installs [logging] as the active transport: starts a [DiagService] on
+  /// it and subscribes to its line stream to detect a future drop (for
+  /// auto-reconnection).
+  void _installConnection(LoggingTransport logging) {
     final service = DiagService(logging);
     service.start();
 
     _transport = logging;
     _diagService = service;
-    _status = ConnectionStatus.connected;
-    _appendLog(LogDirection.info, 'connected to $host:$port');
+    _dropSub = logging.lines.listen(
+      (_) {},
+      onError: (Object _) => _handleDrop(),
+      onDone: _handleDrop,
+    );
   }
 
   /// Disconnects and resets connection-derived state. Idempotent.
+  ///
+  /// Explicit disconnect cancels any in-progress reconnect attempts and
+  /// clears the remembered host/port, so a subsequent transport-close
+  /// notification does not trigger auto-reconnection.
   Future<void> disconnect() async {
+    _host = null;
+    _port = null;
+    _reconnecting = false;
+    _reconnectAttempt = 0;
+
     final service = _diagService;
     final transport = _transport;
+    final dropSub = _dropSub;
     _diagService = null;
     _transport = null;
+    _dropSub = null;
     _status = ConnectionStatus.disconnected;
     _readyInfo = null;
     notifyListeners();
 
+    await dropSub?.cancel();
     if (service != null) {
       await service.dispose();
     }
@@ -204,6 +274,105 @@ class AppState extends ChangeNotifier {
       await transport.dispose();
     }
     _appendLog(LogDirection.info, 'disconnected');
+  }
+
+  /// Called when the active transport's line stream ends or errors
+  /// unexpectedly (peer closed, I/O error). Fails any in-flight requests
+  /// (via [DiagService.dispose]) immediately, then attempts bounded
+  /// auto-reconnection (FR-16) to the last-connected host/port.
+  ///
+  /// A no-op if [disconnect] already ran (host/port cleared) or a reconnect
+  /// sequence is already in progress.
+  void _handleDrop() {
+    if (_host == null || _port == null || _reconnecting) {
+      return;
+    }
+    final host = _host!;
+    final port = _port!;
+
+    final service = _diagService;
+    final transport = _transport;
+    _diagService = null;
+    _transport = null;
+    _dropSub = null;
+
+    // FR-16: fail in-flight requests immediately with a clear
+    // TransportException, before attempting reconnection.
+    unawaited(service?.dispose());
+    unawaited(transport?.dispose());
+
+    _appendLog(LogDirection.info, 'connection to $host:$port lost');
+
+    if (_reconnectPolicy.maxAttempts <= 0) {
+      _status = ConnectionStatus.error;
+      _readyInfo = null;
+      notifyListeners();
+      return;
+    }
+
+    _status = ConnectionStatus.reconnecting;
+    _reconnectAttempt = 0;
+    _readyInfo = null;
+    notifyListeners();
+    unawaited(_reconnectLoop(host, port));
+  }
+
+  /// Bounded, exponentially-backed-off reconnect loop (FR-16). Runs until a
+  /// connection succeeds, the attempts are exhausted, or [disconnect] clears
+  /// [_host] (cancelling the loop).
+  Future<void> _reconnectLoop(String host, int port) async {
+    _reconnecting = true;
+    try {
+      for (var attempt = 0; attempt < _reconnectPolicy.maxAttempts; attempt++) {
+        await _delay(_reconnectPolicy.delayFor(attempt));
+        if (_host == null) {
+          // disconnect() ran while we were waiting.
+          return;
+        }
+        _reconnectAttempt = attempt + 1;
+        notifyListeners();
+
+        final logging = _buildTransport(host, port);
+        try {
+          await logging.connect();
+        } catch (e) {
+          _appendLog(
+            LogDirection.info,
+            'reconnect attempt $_reconnectAttempt/${_reconnectPolicy.maxAttempts} '
+            'to $host:$port failed: $e',
+          );
+          continue;
+        }
+
+        if (_host == null) {
+          // disconnect() ran while we were connecting; discard.
+          await logging.dispose();
+          return;
+        }
+
+        _installConnection(logging);
+        _status = ConnectionStatus.connected;
+        _reconnectAttempt = 0;
+        _appendLog(LogDirection.info, 'reconnected to $host:$port');
+        notifyListeners();
+        return;
+      }
+
+      if (_host != null) {
+        _status = ConnectionStatus.error;
+        _reconnectAttempt = 0;
+        _appendLog(
+          LogDirection.info,
+          'reconnect to $host:$port exhausted after '
+          '${_reconnectPolicy.maxAttempts} attempts; staying disconnected',
+        );
+        _host = null;
+        _port = null;
+        notifyListeners();
+      }
+    } finally {
+      _reconnecting = false;
+    }
   }
 
   DiagService _requireService() {
@@ -222,7 +391,7 @@ class AppState extends ChangeNotifier {
       _lastSessionResult = await service.session(sessionId);
       notifyListeners();
     } on NrcException catch (e) {
-      _appendLog(LogDirection.nrc, 'NRC ${_hex2(e.sid)} ${_hex2(e.nrc)}');
+      _appendLog(LogDirection.nrc, _nrcLog(e.sid, e.nrc));
     } on ErrException catch (e) {
       _appendLog(LogDirection.err, 'ERR ${e.code} ${e.text}');
     }
@@ -236,7 +405,7 @@ class AppState extends ChangeNotifier {
       _lastDtcResult = await service.readDtc(mask: mask);
       notifyListeners();
     } on NrcException catch (e) {
-      _appendLog(LogDirection.nrc, 'NRC ${_hex2(e.sid)} ${_hex2(e.nrc)}');
+      _appendLog(LogDirection.nrc, _nrcLog(e.sid, e.nrc));
     } on ErrException catch (e) {
       _appendLog(LogDirection.err, 'ERR ${e.code} ${e.text}');
     }
@@ -250,7 +419,7 @@ class AppState extends ChangeNotifier {
       _lastClearDtcResult = await service.clearDtc();
       notifyListeners();
     } on NrcException catch (e) {
-      _appendLog(LogDirection.nrc, 'NRC ${_hex2(e.sid)} ${_hex2(e.nrc)}');
+      _appendLog(LogDirection.nrc, _nrcLog(e.sid, e.nrc));
     } on ErrException catch (e) {
       _appendLog(LogDirection.err, 'ERR ${e.code} ${e.text}');
     }
@@ -267,7 +436,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     } on NrcException catch (e) {
       _lastSecurityResult = SecurityNrc(e.sid, e.nrc);
-      _appendLog(LogDirection.nrc, 'NRC ${_hex2(e.sid)} ${_hex2(e.nrc)}');
+      _appendLog(LogDirection.nrc, _nrcLog(e.sid, e.nrc));
       notifyListeners();
     } on ErrException catch (e) {
       _lastSecurityResult = SecurityErr(e.code, e.text);
@@ -284,7 +453,7 @@ class AppState extends ChangeNotifier {
       _tpEnabled = enable;
       notifyListeners();
     } on NrcException catch (e) {
-      _appendLog(LogDirection.nrc, 'NRC ${_hex2(e.sid)} ${_hex2(e.nrc)}');
+      _appendLog(LogDirection.nrc, _nrcLog(e.sid, e.nrc));
     } on ErrException catch (e) {
       _appendLog(LogDirection.err, 'ERR ${e.code} ${e.text}');
     }
@@ -298,3 +467,9 @@ class AppState extends ChangeNotifier {
 }
 
 String _hex2(int v) => v.toRadixString(16).toUpperCase().padLeft(2, '0');
+
+/// Formats an ECU negative response for the log, including the symbolic NRC
+/// name (e.g. `NRC 27 35 (invalidKey)`) -- mirrors
+/// `terminal/repl.py`'s `render()`.
+String _nrcLog(int sid, int nrc) =>
+    'NRC ${_hex2(sid)} ${_hex2(nrc)} (${nrcName(nrc)})';

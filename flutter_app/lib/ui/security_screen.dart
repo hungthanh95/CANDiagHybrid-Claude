@@ -10,6 +10,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../codec/nrc.dart';
 import '../state/app_state.dart';
 
 /// Security access screen: single unlock action for a chosen odd level.
@@ -52,8 +53,9 @@ class _SecurityScreenState extends State<SecurityScreen> {
         ),
       );
     } else if (result is SecurityNrc) {
+      final name = nrcName(result.nrc);
       resultWidget = Text(
-        'NRC ${_hex2(result.sid)} ${_hex2(result.nrc)}',
+        'NRC ${_hex2(result.sid)} ${_hex2(result.nrc)} ($name)',
         style: const TextStyle(
           color: Colors.orange,
           fontWeight: FontWeight.bold,

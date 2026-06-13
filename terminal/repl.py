@@ -20,11 +20,20 @@ terminal response carrying the matching ``seq`` (skipping unsolicited
 ``seq=0`` lines such as ``READY``/``EVT``), and renders it. ``RSP`` after
 ``READDTC`` is decoded via :mod:`protocol.dtc`; ``NRC`` is annotated via
 :mod:`protocol.nrc`.
+
+Reconnection (FR-16, NFR-5): on transport loss, any in-flight requests are
+failed immediately with :class:`terminal.transport_ws.TransportError`
+(rather than waiting for the per-request timeout), and the REPL then
+attempts a bounded, exponentially-backed-off reconnect per
+:class:`ReconnectPolicy`. If reconnection succeeds, the connection resumes
+transparently. If all attempts are exhausted, the REPL ends up cleanly
+disconnected (``self.transport is None``) -- no hang, no crash.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import sys
 
@@ -44,15 +53,44 @@ from terminal.transport_ws import TransportError, WsTransport
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(frozen=True)
+class ReconnectPolicy:
+    """Bounded exponential-backoff policy for auto-reconnection (FR-16).
+
+    Args:
+        max_attempts: Maximum number of reconnect attempts after a transport
+            drop. ``0`` disables auto-reconnect entirely.
+        base_delay: Delay (seconds) before the first reconnect attempt.
+            Subsequent attempts double this delay (``base_delay * 2**k``),
+            capped at ``max_delay``.
+        max_delay: Upper bound (seconds) on the backoff delay between
+            attempts.
+    """
+
+    max_attempts: int = 5
+    base_delay: float = 0.5
+    max_delay: float = 10.0
+
+    def delay_for(self, attempt: int) -> float:
+        """Backoff delay (seconds) before reconnect ``attempt`` (0-indexed)."""
+        return min(self.base_delay * (2**attempt), self.max_delay)
+
+
 class Repl:
     """Holds connection/session state for the interactive terminal."""
 
-    def __init__(self) -> None:
+    def __init__(self, reconnect: ReconnectPolicy | None = None) -> None:
         self.transport: WsTransport | None = None
         self.seq_alloc = SeqAllocator()
         self.trace = False
+        self.reconnect = reconnect if reconnect is not None else ReconnectPolicy()
         self._reader_task: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[Response]] = {}
+        self._host: str | None = None
+        self._port: int | None = None
+        # Set while a reconnect attempt sequence is in progress, so
+        # disconnect() (and a second drop) don't race with it.
+        self._reconnecting = False
 
     # ------------------------------------------------------------------
     # connection management
@@ -64,10 +102,15 @@ class Repl:
         transport = WsTransport(host, port)
         await transport.connect()
         self.transport = transport
+        self._host = host
+        self._port = port
         self._reader_task = asyncio.create_task(self._read_loop())
         print(f"connected (Option B) to {host}:{port}")
 
     async def disconnect(self) -> None:
+        self._host = None
+        self._port = None
+        self._reconnecting = False
         if self.transport is not None:
             await self.transport.close()
         if self._reader_task is not None:
@@ -75,9 +118,12 @@ class Repl:
             self._reader_task = None
         self.transport = None
         # Fail any commands still waiting for a response.
+        self._fail_pending("connection closed")
+
+    def _fail_pending(self, message: str) -> None:
         for fut in self._pending.values():
             if not fut.done():
-                fut.set_exception(TransportError("connection closed"))
+                fut.set_exception(TransportError(message))
         self._pending.clear()
 
     async def _read_loop(self) -> None:
@@ -104,10 +150,60 @@ class Repl:
         except TransportError as exc:
             logger.error("transport error: %s", exc)
         finally:
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(TransportError("connection closed"))
-            self._pending.clear()
+            # FR-16: fail any in-flight requests immediately on transport
+            # loss, before attempting (bounded) reconnection.
+            self._fail_pending("connection closed")
+            await self._try_reconnect()
+
+    async def _try_reconnect(self) -> None:
+        """Attempt bounded, exponentially-backed-off reconnection (FR-16).
+
+        Runs after the read loop ends (transport drop). On success, installs
+        a fresh transport and restarts the read loop. On exhaustion (or if
+        auto-reconnect is disabled / no host:port to reconnect to), leaves
+        ``self.transport`` as ``None`` -- cleanly disconnected, no hang.
+        """
+        if self._reconnecting:
+            return
+        host, port = self._host, self._port
+        old_transport = self.transport
+        self.transport = None
+        self._reader_task = None
+        if old_transport is not None:
+            await old_transport.close()
+        if host is None or port is None or self.reconnect.max_attempts <= 0:
+            return
+
+        self._reconnecting = True
+        try:
+            for attempt in range(self.reconnect.max_attempts):
+                await asyncio.sleep(self.reconnect.delay_for(attempt))
+                # disconnect() may have been called while we were sleeping.
+                if self._host is None:
+                    return
+                transport = WsTransport(host, port)
+                try:
+                    await transport.connect()
+                except TransportError as exc:
+                    logger.warning(
+                        "reconnect attempt %d/%d to %s:%s failed: %s",
+                        attempt + 1,
+                        self.reconnect.max_attempts,
+                        host,
+                        port,
+                        exc,
+                    )
+                    continue
+                self.transport = transport
+                self._reader_task = asyncio.create_task(self._read_loop())
+                logger.info("reconnected to %s:%s", host, port)
+                return
+            logger.error(
+                "reconnect exhausted after %d attempts; staying disconnected",
+                self.reconnect.max_attempts,
+            )
+        finally:
+            self._reconnecting = False
 
     @staticmethod
     def _print_unsolicited(resp: Response) -> None:

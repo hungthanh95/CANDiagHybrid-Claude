@@ -65,9 +65,19 @@ class UnexpectedResponseException implements Exception {
 /// responses; call [dispose] to stop listening and fail any pending
 /// requests.
 class DiagService {
-  DiagService(this._transport);
+  /// [requestTimeout] bounds how long a request waits for its terminal
+  /// response before failing with [TransportException] (FR-16/NFR-5; default
+  /// matches the terminal client's 5s timeout, `terminal/repl.py`
+  /// `_send_and_wait`). A timeout is a transport/tool failure -- distinct
+  /// from an ECU [NrcException] or a protocol [ErrException] ("NRC ≠ ERR ≠
+  /// transport").
+  DiagService(
+    this._transport, {
+    this._requestTimeout = const Duration(seconds: 5),
+  });
 
   final Transport _transport;
+  final Duration _requestTimeout;
   final SeqAllocator _seqAlloc = SeqAllocator();
   final Map<int, Completer<Response>> _pending = <int, Completer<Response>>{};
   StreamSubscription<String>? _sub;
@@ -119,7 +129,8 @@ class DiagService {
 
   /// Sends [line] and returns a future that resolves with the terminal
   /// response sharing its seq, or throws [TransportException] if the
-  /// connection drops before a response arrives.
+  /// connection drops, or no response arrives within [_requestTimeout]
+  /// (FR-16/NFR-5 -- a clear transport error, not a hang).
   Future<Response> _sendAndWait(String line) async {
     final seq = int.parse(line.split(' ').first);
     final completer = Completer<Response>();
@@ -130,7 +141,12 @@ class DiagService {
       _pending.remove(seq);
       rethrow;
     }
-    return completer.future;
+    try {
+      return await completer.future.timeout(_requestTimeout);
+    } on TimeoutException {
+      _pending.remove(seq);
+      throw TransportException('timed out waiting for response to: $line');
+    }
   }
 
   /// Throws [NrcException] or [ErrException] if [resp] is a negative

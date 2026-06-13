@@ -314,6 +314,17 @@ void main() {
         isTrue,
       );
       expect(state.log.any((e) => e.direction == LogDirection.err), isFalse);
+
+      // The symbolic NRC name is included for readability (mirrors
+      // terminal/repl.py's render()).
+      expect(
+        state.log.any(
+          (e) =>
+              e.direction == LogDirection.nrc &&
+              e.text.contains('NRC 27 35 (invalidKey)'),
+        ),
+        isTrue,
+      );
     });
 
     test('tool error: ERR 500 keygen_fail -> lastSecurityResult is a '
