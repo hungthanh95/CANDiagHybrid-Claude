@@ -627,11 +627,27 @@ flutter_app/lib/
 │   ├── dtc.dart                  # DTC decode (§6.1)
 │   └── nrc.dart                  # NRC name table, display only (§6.2)
 ├── services/diag_service.dart  # high-level ops: readDtc(), securityUnlock(), tp(), raw(), session(), clearDtc(), ping()
-├── state/                      # app state (transport, log, dtc list) -- not yet built
-└── ui/                         # screens + log view -- not yet built
+├── state/
+│   ├── app_state.dart           # AppState (ChangeNotifier): connection lifecycle,
+│   │                             #  log, last results per capability, ReadyInfo,
+│   │                             #  SecurityResult (Success/Nrc/Err)
+│   ├── log_entry.dart           # LogEntry + LogDirection (sent/recv/info/nrc/err)
+│   └── logging_transport.dart   # LoggingTransport: Transport decorator that
+│                                 #  feeds sent/received lines into AppState's log
+├── ui/
+│   ├── home_screen.dart         # NavigationBar shell wiring all screens to one AppState
+│   ├── connect_screen.dart      # WS host/port, connect/disconnect, READY banner
+│   ├── session_screen.dart      # SESSION <hex> -> RSP
+│   ├── read_dtc_screen.dart     # READDTC -> decoded DTC list (codec/dtc.dart)
+│   ├── clear_dtc_screen.dart    # CLEARDTC -> RSP
+│   ├── security_screen.dart     # single unlock action for a chosen odd level;
+│   │                             #  OK SEC <level> / NRC <sid> <nrc> / ERR <code> <text>
+│   ├── tester_present_screen.dart # on/off toggle, TP START/STOP -> OK TP
+│   └── log_view.dart            # running list of sent/received protocol lines
+└── main.dart                    # FlexDiagApp: wires AppState to HomeScreen
 ```
 
-As of the M5 foundation slice, `flutter_app` is a pure-Dart package (`environment: { sdk: ... }`, no `flutter:` dependency yet) so `dart test` covers `codec/`, `protocol/`, `transport/`, and `services/` without the Flutter SDK. `lib/state/` and `lib/ui/` (and `main.dart`) land in a follow-up task that may add the `flutter` SDK constraint.
+As of the M5 UI slice, `flutter_app` is a Flutter app package (`flutter:` SDK dependency, `uses-material-design: true`, Linux desktop platform target enabled under `linux/`). `flutter test` covers `codec/`, `protocol/`, `transport/`, `services/`, `state/`, and `ui/` headlessly via the `flutter_tester` VM (no GTK/display required). Screens depend only on `AppState`/`DiagService`/`Transport`, never construct `WsTransport` directly; `AppState` is constructed once in `main.dart` and passed down. State management is a single `ChangeNotifier` (`AppState`) plus `ListenableBuilder` -- no provider/riverpod/bloc.
 
 `DiagService` (constructed from a `Transport`, started via `.start()`) exposes:
 

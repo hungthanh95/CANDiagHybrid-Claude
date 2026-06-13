@@ -7,6 +7,11 @@
 //
 // Exercises one request per capability and prints the raw bytes sent vs.
 // the decoded result, for NFR-4 byte-accuracy spot-checking.
+//
+// `avoid_print` (from `flutter_lints`, added for the M5 UI slice) is
+// disabled file-wide: printing raw/decoded bytes to stdout is this script's
+// entire purpose.
+// ignore_for_file: avoid_print
 
 import 'package:flexdiag_app/services/diag_service.dart';
 import 'package:flexdiag_app/transport/ws_transport.dart';
@@ -30,7 +35,8 @@ Future<void> main() async {
   print('--- READDTC FF ---');
   final dtc = await service.readDtc();
   print(
-      'mask=${dtc.availabilityMask} dtcs=${dtc.dtcs.map((d) => '${d.code}/${d.status}')}');
+    'mask=${dtc.availabilityMask} dtcs=${dtc.dtcs.map((d) => '${d.code}/${d.status}')}',
+  );
 
   print('--- SECURITY 01 ---');
   print(await service.securityUnlock(0x01));
