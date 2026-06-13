@@ -136,30 +136,37 @@ void main() {
   });
 
   group('securityUnlock', () {
-    test('sends SECURITY <hex> and resolves to the odd level on OK SEC',
-        () async {
-      final future = service.securityUnlock(0x01);
-      await Future<void>.delayed(Duration.zero);
-      expect(transport.sent.last, endsWith('SECURITY 01'));
-      final seq = transport.lastSeq();
-      transport.pushLine('$seq OK SEC 01');
+    test(
+      'sends SECURITY <hex> and resolves to the odd level on OK SEC',
+      () async {
+        final future = service.securityUnlock(0x01);
+        await Future<void>.delayed(Duration.zero);
+        expect(transport.sent.last, endsWith('SECURITY 01'));
+        final seq = transport.lastSeq();
+        transport.pushLine('$seq OK SEC 01');
 
-      expect(await future, 0x01);
-    });
+        expect(await future, 0x01);
+      },
+    );
 
-    test('invalidKey (NRC 27 35) surfaces as NrcException, key not derived',
-        () async {
-      final future = service.securityUnlock(0x01);
-      await Future<void>.delayed(Duration.zero);
-      final seq = transport.lastSeq();
-      transport.pushLine('$seq NRC 27 35');
+    test(
+      'invalidKey (NRC 27 35) surfaces as NrcException, key not derived',
+      () async {
+        final future = service.securityUnlock(0x01);
+        await Future<void>.delayed(Duration.zero);
+        final seq = transport.lastSeq();
+        transport.pushLine('$seq NRC 27 35');
 
-      final err = await future.then<Object>((v) => v, onError: (Object e) => e);
-      expect(err, isA<NrcException>());
-      final nrcErr = err as NrcException;
-      expect(nrcErr.sid, 0x27);
-      expect(nrcErr.nrc, 0x35);
-    });
+        final err = await future.then<Object>(
+          (v) => v,
+          onError: (Object e) => e,
+        );
+        expect(err, isA<NrcException>());
+        final nrcErr = err as NrcException;
+        expect(nrcErr.sid, 0x27);
+        expect(nrcErr.nrc, 0x35);
+      },
+    );
 
     test('securityAccessDenied (NRC 27 33) surfaces as NrcException', () async {
       final future = service.securityUnlock(0x01);
@@ -239,18 +246,22 @@ void main() {
       expect((err as ErrException).code, 500);
     });
 
-    test('ERR 503 tool_unavailable maps to ErrException with code 503',
-        () async {
-      final future = service.ping();
-      await Future<void>.delayed(Duration.zero);
-      final seq = transport.lastSeq();
-      transport.pushLine('$seq ERR 503 tool_unavailable');
+    test(
+      'ERR 503 tool_unavailable maps to ErrException with code 503',
+      () async {
+        final future = service.ping();
+        await Future<void>.delayed(Duration.zero);
+        final seq = transport.lastSeq();
+        transport.pushLine('$seq ERR 503 tool_unavailable');
 
-      final err =
-          await future.then<Object?>((_) => null, onError: (Object e) => e);
-      expect(err, isA<ErrException>());
-      expect((err as ErrException).code, 503);
-    });
+        final err = await future.then<Object?>(
+          (_) => null,
+          onError: (Object e) => e,
+        );
+        expect(err, isA<ErrException>());
+        expect((err as ErrException).code, 503);
+      },
+    );
 
     test('ERR 504 ecu_timeout maps to ErrException with code 504', () async {
       final future = service.readDtc();
@@ -265,31 +276,34 @@ void main() {
   });
 
   group('transport drop mid-request', () {
-    test('peer closes before responding -> TransportException, no hang',
-        () async {
-      final future = service.readDtc();
-      await Future<void>.delayed(Duration.zero);
+    test(
+      'peer closes before responding -> TransportException, no hang',
+      () async {
+        final future = service.readDtc();
+        await Future<void>.delayed(Duration.zero);
 
-      transport.closeStream();
+        transport.closeStream();
 
-      await expectLater(future, throwsA(isA<TransportException>()));
-    });
+        await expectLater(future, throwsA(isA<TransportException>()));
+      },
+    );
   });
 
   group('malformed response line', () {
     test(
-        'unparseable line from server is ignored, pending request still resolves',
-        () async {
-      final future = service.ping();
-      await Future<void>.delayed(Duration.zero);
-      final seq = transport.lastSeq();
+      'unparseable line from server is ignored, pending request still resolves',
+      () async {
+        final future = service.ping();
+        await Future<void>.delayed(Duration.zero);
+        final seq = transport.lastSeq();
 
-      // Garbage line (e.g. a corrupted/unknown verb) must not crash the
-      // service or resolve the pending future incorrectly.
-      transport.pushLine('not a valid line');
-      transport.pushLine('$seq PONG');
+        // Garbage line (e.g. a corrupted/unknown verb) must not crash the
+        // service or resolve the pending future incorrectly.
+        transport.pushLine('not a valid line');
+        transport.pushLine('$seq PONG');
 
-      await future;
-    });
+        await future;
+      },
+    );
   });
 }

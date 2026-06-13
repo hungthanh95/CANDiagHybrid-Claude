@@ -300,17 +300,22 @@ Response parseResponse(String line) {
         throw ProtocolError('bad ERR code: ${rest[0]}');
       }
       return Response(
-          seq: seq,
-          verb: verb,
-          errCode: code,
-          errText: rest.sublist(1).join(' '));
+        seq: seq,
+        verb: verb,
+        errCode: code,
+        errText: rest.sublist(1).join(' '),
+      );
 
     case Verb.evt:
       if (rest.isEmpty) {
         throw ProtocolError('EVT requires a name');
       }
       return Response(
-          seq: seq, verb: verb, evtName: rest[0], evtArgs: rest.sublist(1));
+        seq: seq,
+        verb: verb,
+        evtName: rest[0],
+        evtArgs: rest.sublist(1),
+      );
 
     case Verb.pong:
       if (rest.isNotEmpty) {

@@ -76,11 +76,7 @@ class DiagService {
   /// responses to pending requests by seq. Unsolicited lines (seq `0`,
   /// e.g. `READY`/`EVT`) are ignored at this layer.
   void start() {
-    _sub = _transport.lines.listen(
-      _onLine,
-      onError: _onError,
-      onDone: _onDone,
-    );
+    _sub = _transport.lines.listen(_onLine, onError: _onError, onDone: _onDone);
   }
 
   void _onLine(String line) {
@@ -104,7 +100,8 @@ class DiagService {
 
   void _onError(Object error) {
     _failAllPending(
-        error is TransportException ? error : TransportException('$error'));
+      error is TransportException ? error : TransportException('$error'),
+    );
   }
 
   void _onDone() {
@@ -155,11 +152,13 @@ class DiagService {
   /// [TransportException] if the connection drops.
   Future<ReadDtcResult> readDtc({int mask = 0xFF}) async {
     final seq = _seqAlloc.next();
-    final resp =
-        _checkNegative(await _sendAndWait(encodeReadDtc(seq, mask: mask)));
+    final resp = _checkNegative(
+      await _sendAndWait(encodeReadDtc(seq, mask: mask)),
+    );
     if (resp.verb != Verb.rsp || resp.data == null) {
       throw UnexpectedResponseException(
-          'readDtc: expected RSP, got ${resp.verb}');
+        'readDtc: expected RSP, got ${resp.verb}',
+      );
     }
     return parseReadDtcPayload(resp.data!);
   }
@@ -172,7 +171,8 @@ class DiagService {
     final resp = _checkNegative(await _sendAndWait(encodeClearDtc(seq)));
     if (resp.verb != Verb.rsp || resp.data == null) {
       throw UnexpectedResponseException(
-          'clearDtc: expected RSP, got ${resp.verb}');
+        'clearDtc: expected RSP, got ${resp.verb}',
+      );
     }
     return resp.data!;
   }
@@ -183,11 +183,13 @@ class DiagService {
   /// `[0x50, session, ...timing]`). Uses `RSP`, never `OK` (docs/03 §1.3).
   Future<List<int>> session(int sessionId) async {
     final seq = _seqAlloc.next();
-    final resp =
-        _checkNegative(await _sendAndWait(encodeSession(seq, sessionId)));
+    final resp = _checkNegative(
+      await _sendAndWait(encodeSession(seq, sessionId)),
+    );
     if (resp.verb != Verb.rsp || resp.data == null) {
       throw UnexpectedResponseException(
-          'session: expected RSP, got ${resp.verb}');
+        'session: expected RSP, got ${resp.verb}',
+      );
     }
     return resp.data!;
   }
@@ -204,7 +206,8 @@ class DiagService {
     final resp = _checkNegative(await _sendAndWait(encodeSecurity(seq, level)));
     if (resp.verb != Verb.ok || resp.okKind != 'SEC' || resp.level == null) {
       throw UnexpectedResponseException(
-          'securityUnlock: expected OK SEC, got ${resp.verb}');
+        'securityUnlock: expected OK SEC, got ${resp.verb}',
+      );
     }
     return resp.level!;
   }
@@ -219,7 +222,8 @@ class DiagService {
     final resp = _checkNegative(await _sendAndWait(line));
     if (resp.verb != Verb.ok || resp.okKind != 'TP') {
       throw UnexpectedResponseException(
-          'testerPresent: expected OK TP, got ${resp.verb}');
+        'testerPresent: expected OK TP, got ${resp.verb}',
+      );
     }
   }
 
@@ -240,7 +244,8 @@ class DiagService {
     final resp = _checkNegative(await _sendAndWait(encodePing(seq)));
     if (resp.verb != Verb.pong) {
       throw UnexpectedResponseException(
-          'ping: expected PONG, got ${resp.verb}');
+        'ping: expected PONG, got ${resp.verb}',
+      );
     }
   }
 

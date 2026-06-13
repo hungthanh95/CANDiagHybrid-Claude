@@ -58,13 +58,15 @@ class WsTransport implements Transport {
       _closed = false;
       channel.stream.listen(
         (dynamic raw) {
-          final line =
-              raw is String ? raw : String.fromCharCodes(raw as List<int>);
+          final line = raw is String
+              ? raw
+              : String.fromCharCodes(raw as List<int>);
           final trimmed = line.replaceAll(RegExp(r'[\r\n]+$'), '');
           if (trimmed.length + 1 > _kMaxLine) {
             _closed = true;
-            controller
-                .addError(TransportException('line exceeds buffer limit'));
+            controller.addError(
+              TransportException('line exceeds buffer limit'),
+            );
             controller.close();
             return;
           }
@@ -95,7 +97,8 @@ class WsTransport implements Transport {
     }
     if (line.length + 1 > _kMaxLine) {
       throw TransportException(
-          'line exceeds max length ($_kMaxLine): ${line.length + 1}');
+        'line exceeds max length ($_kMaxLine): ${line.length + 1}',
+      );
     }
     try {
       channel.sink.add(line);
