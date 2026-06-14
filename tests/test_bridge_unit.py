@@ -15,6 +15,10 @@ Covers (FR-11 "Option B transport", docs/03 §2/§4.2):
 
 from __future__ import annotations
 
+import sys
+import time
+from unittest.mock import MagicMock
+
 import pytest
 
 from bridge.flexdiag_bridge import (
@@ -32,6 +36,7 @@ from bridge.flexdiag_bridge import (
     STATUS_POSITIVE,
     BridgeServer,
     FakeVectorCom,
+    VectorCom,
     encode_response,
 )
 from protocol.wire import parse_response
@@ -480,3 +485,64 @@ async def test_bye_closes_connection(ws):
     await ws.send("10 BYE")
     with pytest.raises(StopAsyncIteration):
         await lines.__anext__()
+
+
+# ---------------------------------------------------------------------------
+# VectorCom._ensure_measurement_running (Feature 3: auto-start measurement)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_measurement_running_noop_when_already_running():
+    vec = VectorCom()
+    app = MagicMock()
+    app.Measurement.Running = True
+
+    vec._ensure_measurement_running(app)
+
+    app.Measurement.Start.assert_not_called()
+
+
+def test_ensure_measurement_running_noop_when_disabled():
+    vec = VectorCom(auto_start_measurement=False)
+    app = MagicMock()
+    app.Measurement.Running = False
+
+    vec._ensure_measurement_running(app)
+
+    app.Measurement.Start.assert_not_called()
+
+
+def test_ensure_measurement_running_starts_when_stopped(monkeypatch):
+    # Lazy `import pythoncom` inside _ensure_measurement_running -- stub it
+    # out so this test runs on non-Windows machines without pywin32.
+    fake_pythoncom = MagicMock()
+    monkeypatch.setitem(sys.modules, "pythoncom", fake_pythoncom)
+
+    vec = VectorCom(measurement_start_timeout=5.0)
+    app = MagicMock()
+
+    # Becomes True after Start() is called and is polled once.
+    running_values = [False, False, True]
+    type(app.Measurement).Running = property(lambda self: running_values.pop(0))
+
+    vec._ensure_measurement_running(app)
+
+    app.Measurement.Start.assert_called_once()
+    fake_pythoncom.PumpWaitingMessages.assert_called()
+
+
+def test_ensure_measurement_running_times_out(monkeypatch):
+    fake_pythoncom = MagicMock()
+    monkeypatch.setitem(sys.modules, "pythoncom", fake_pythoncom)
+
+    vec = VectorCom(measurement_start_timeout=0.05, poll_interval=0.01)
+    app = MagicMock()
+    app.Measurement.Running = False  # never becomes True
+    app.Measurement.Start = MagicMock()
+
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="measurement did not start"):
+        vec._ensure_measurement_running(app)
+    assert time.monotonic() - start < 5.0  # bounded by measurement_start_timeout
+
+    app.Measurement.Start.assert_called_once()

@@ -30,6 +30,7 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 
 from mock_ecu.uds import Ecu
 from protocol.wire import (
@@ -78,11 +79,33 @@ class VectorCom:
             ``"CANalyzer"``.
         poll_interval: seconds to sleep between ``PumpWaitingMessages``
             polls of ``Diag::RspTrigger`` (default 5 ms).
+        auto_start_measurement: if ``True`` (default), start the
+            CANoe/CANalyzer measurement on connect if it isn't already
+            running (and wait for it to come up). If ``False``, skip this
+            check -- the measurement is assumed to be externally managed.
+        measurement_start_timeout: seconds to wait for
+            ``app.Measurement.Running`` to become ``True`` after calling
+            ``app.Measurement.Start()`` (default 10 s). If the timeout
+            elapses, ``_run`` raises ``RuntimeError``, surfacing as a
+            startup failure.
+        cmd_timeout: seconds to wait for ``Diag::RspTrigger`` to change
+            after a command is written to the Req* sysvars before
+            synthesizing a ``STATUS_ERR_TIMEOUT`` event (default 5 s).
     """
 
-    def __init__(self, prefer: str = "auto", poll_interval: float = 0.005) -> None:
+    def __init__(
+        self,
+        prefer: str = "auto",
+        poll_interval: float = 0.005,
+        auto_start_measurement: bool = True,
+        measurement_start_timeout: float = 10.0,
+        cmd_timeout: float = 5.0,
+    ) -> None:
         self.prefer = prefer
         self.poll_interval = poll_interval
+        self.auto_start_measurement = auto_start_measurement
+        self.measurement_start_timeout = measurement_start_timeout
+        self.cmd_timeout = cmd_timeout
         self.cmd_q: queue.Queue[tuple[int, int, int, bytes | None]] = queue.Queue()
         self.evt_q: queue.Queue[tuple[int, int, int, bytes]] = queue.Queue()
         self.tool: str = ""
@@ -119,6 +142,36 @@ class VectorCom:
                 continue
         raise RuntimeError(f"No CANoe/CANalyzer COM server available: {last_exc}")
 
+    def _ensure_measurement_running(self, app: object) -> None:
+        """Start the CANoe/CANalyzer measurement if it isn't already running.
+
+        If :attr:`auto_start_measurement` is ``False``, this is a no-op. If
+        ``app.Measurement.Running`` is already ``True``, this is a no-op.
+        Otherwise calls ``app.Measurement.Start()`` and polls
+        ``app.Measurement.Running`` (pumping the COM message queue between
+        polls) until it becomes ``True`` or :attr:`measurement_start_timeout`
+        elapses, in which case a ``RuntimeError`` is raised.
+        """
+        if not self.auto_start_measurement:
+            return
+
+        if bool(app.Measurement.Running):  # type: ignore[attr-defined]
+            return
+
+        app.Measurement.Start()  # type: ignore[attr-defined]
+
+        import pythoncom
+
+        deadline = time.monotonic() + self.measurement_start_timeout
+        while not bool(app.Measurement.Running):  # type: ignore[attr-defined]
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "CANoe/CANalyzer measurement did not start within "
+                    f"{self.measurement_start_timeout}s"
+                )
+            pythoncom.PumpWaitingMessages()
+            self._stop.wait(self.poll_interval)
+
     def _run(self, prefer: str | None = None) -> None:
         import pythoncom
         import win32com.client as win32com_client
@@ -131,6 +184,8 @@ class VectorCom:
             app, tool = self._connect(win32com_client, prefer)
             self.tool = tool
 
+            self._ensure_measurement_running(app)
+
             sysns = app.System.Namespaces.Item("Diag")  # type: ignore[attr-defined]
 
             def sv(name: str) -> object:
@@ -138,25 +193,35 @@ class VectorCom:
 
             last_rsp = int(sv("RspTrigger").Value)  # type: ignore[attr-defined]
 
+            # Outstanding-command tracking for STATUS_ERR_TIMEOUT synthesis
+            # (docs/03 §4.2): (seq, kind, sent_at) of the one command
+            # currently awaiting a RspTrigger change, or None.
+            outstanding: tuple[int, int, float] | None = None
+
             while not self._stop.is_set():
                 pythoncom.PumpWaitingMessages()
 
-                # 1) push any pending client command into sysvars.
-                try:
-                    seq, kind, arg, data = self.cmd_q.get_nowait()
-                    if data is not None:
-                        sv("ReqData").Value = tuple(data)  # type: ignore[attr-defined]
-                    sv("ReqSeq").Value = seq  # type: ignore[attr-defined]
-                    sv("ReqKind").Value = kind  # type: ignore[attr-defined]
-                    sv("ReqArg").Value = arg  # type: ignore[attr-defined]
-                    sv("ReqTrigger").Value = int(sv("ReqTrigger").Value) + 1  # type: ignore[attr-defined]
-                except queue.Empty:
-                    pass
+                # 1) push any pending client command into sysvars -- but only
+                #    if no command is currently outstanding (one in flight at
+                #    a time, consistent with get_nowait() below).
+                if outstanding is None:
+                    try:
+                        seq, kind, arg, data = self.cmd_q.get_nowait()
+                        if data is not None:
+                            sv("ReqData").Value = tuple(data)  # type: ignore[attr-defined]
+                        sv("ReqSeq").Value = seq  # type: ignore[attr-defined]
+                        sv("ReqKind").Value = kind  # type: ignore[attr-defined]
+                        sv("ReqArg").Value = arg  # type: ignore[attr-defined]
+                        sv("ReqTrigger").Value = int(sv("ReqTrigger").Value) + 1  # type: ignore[attr-defined]
+                        outstanding = (seq, kind, time.monotonic())
+                    except queue.Empty:
+                        pass
 
                 # 2) detect a new response.
                 cur = int(sv("RspTrigger").Value)  # type: ignore[attr-defined]
                 if cur != last_rsp:
                     last_rsp = cur
+                    outstanding = None
                     self.evt_q.put(
                         (
                             int(sv("RspSeq").Value),  # type: ignore[attr-defined]
@@ -165,6 +230,12 @@ class VectorCom:
                             bytes(sv("RspData").Value),  # type: ignore[attr-defined]
                         )
                     )
+                elif (
+                    outstanding is not None and time.monotonic() - outstanding[2] > self.cmd_timeout
+                ):
+                    out_seq, out_kind, _ = outstanding
+                    self.evt_q.put((out_seq, STATUS_ERR_TIMEOUT, out_kind, b""))
+                    outstanding = None
 
                 self._stop.wait(self.poll_interval)
         finally:
@@ -183,12 +254,20 @@ class FakeVectorCom:
     ``.tool`` (``"Mock"``), ``.start()``, ``.stop()``. Additionally exposes
     ``.ecu`` (the :class:`Ecu` instance) so tests can call
     :meth:`Ecu.inject_next`.
+
+    Args:
+        ecu: the :class:`Ecu` instance to drive (defaults to a fresh one).
+        cmd_timeout: seconds to wait before synthesizing a
+            ``STATUS_ERR_TIMEOUT`` event when ``ecu.consume_drop()`` is hit
+            (simulating a real ``VectorCom`` command timeout, docs/03
+            §4.2). Defaults to a short ``0.2`` s so tests run fast.
     """
 
     tool = "Mock"
 
-    def __init__(self, ecu: Ecu | None = None) -> None:
+    def __init__(self, ecu: Ecu | None = None, cmd_timeout: float = 0.2) -> None:
         self.ecu = ecu if ecu is not None else Ecu()
+        self.cmd_timeout = cmd_timeout
         self.cmd_q: queue.Queue[tuple[int, int, int, bytes | None]] = queue.Queue()
         self.evt_q: queue.Queue[tuple[int, int, int, bytes]] = queue.Queue()
         self._stop = threading.Event()
@@ -252,7 +331,12 @@ class FakeVectorCom:
         in docs/03 §1.4/§1.5.
         """
         if self.ecu.consume_drop():
-            return  # simulate a hang: no event pushed
+            # Simulate a hang: a real VectorCom would eventually time out
+            # waiting for RspTrigger to change (docs/03 §4.2).
+            self._stop.wait(self.cmd_timeout)
+            if not self._stop.is_set():
+                self.evt_q.put((seq, STATUS_ERR_TIMEOUT, kind, b""))
+            return
 
         if self.ecu.consume_pending_before():
             sid = req[0]
@@ -274,6 +358,9 @@ class FakeVectorCom:
         ``(seq, STATUS_NEGATIVE, KIND_SECURITY, 7F 27 <nrc>)``.
         """
         if self.ecu.consume_drop():
+            self._stop.wait(self.cmd_timeout)
+            if not self._stop.is_set():
+                self.evt_q.put((seq, STATUS_ERR_TIMEOUT, KIND_SECURITY, b""))
             return
 
         seed_req = bytes([0x27, level])

@@ -176,3 +176,36 @@ async def test_bye_clean_close(server, ws):
     # No terminal response line for BYE -- the server closes the connection.
     with pytest.raises(StopAsyncIteration):
         await lines.__anext__()
+
+
+# ---------------------------------------------------------------------------
+# Command timeout (Feature 1: STATUS_ERR_TIMEOUT -> ERR <seq> 504 ecu_timeout)
+# ---------------------------------------------------------------------------
+
+
+async def test_command_timeout_yields_err_504(server, ws):
+    """``inject_next(drop=True)`` -> ``ERR <seq> 504 ecu_timeout`` within bound time.
+
+    Unlike ``test_transport_drop_mid_request`` (which simulates an
+    indefinite hang and stops the server to observe), this exercises
+    ``FakeVectorCom``'s ``cmd_timeout`` synthesis of ``STATUS_ERR_TIMEOUT``
+    (docs/03 §2 RspStatus 4 -> ``ERR 504 ecu_timeout``), proving the bridge
+    never hangs the WebSocket client even without external intervention.
+    """
+    lines = ws.recv_lines()
+    await _drain_banner(lines)
+
+    server.ecu.inject_next(drop=True)
+    await ws.send("12 READDTC FF")
+
+    resp = parse_response(await lines.__anext__())
+    assert resp.seq == 12
+    assert resp.verb == "ERR"
+    assert resp.code == 504
+    assert resp.text == "ecu_timeout"
+
+    # Peer stays alive -- a subsequent request gets a normal response.
+    await ws.send("13 READDTC FF")
+    resp2 = parse_response(await lines.__anext__())
+    assert resp2.seq == 13
+    assert resp2.verb == "RSP"
